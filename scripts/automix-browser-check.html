@@ -1,0 +1,47 @@
+<!doctype html><meta charset="utf-8"><title>Cue Automix verification</title>
+<style>body{font:16px system-ui;padding:28px;background:#15191f;color:#e8edf5}button{font:inherit;padding:12px}li{margin:12px 0}.pass{color:#9ae6b4}.fail{color:#ff9696}</style>
+<h1>Automix browser verification</h1>
+<p>Runs a separate silent audio graph with generated tracks. No library, MIDI or speaker settings are changed.</p>
+<button id="run">Run Automix checks</button><ol id="results"></ol>
+<script type="module">
+import { DJEngine } from '/src/lib/dj/engine.ts';
+import { AutomixSession } from '/src/lib/dj/automix-session.ts';
+import { defaultDatabase } from '/src/lib/dj/storage.ts';
+const results=document.querySelector('#results');
+const assert=(condition,label)=>{const row=document.createElement('li');row.className=condition?'pass':'fail';row.textContent=(condition?'PASS: ':'FAIL: ')+label;results.append(row);if(!condition)throw new Error(label)};
+document.querySelector('#run').onclick=async()=>{
+ document.querySelector('#run').disabled=true;
+ const context=new AudioContext({latencyHint:'interactive'});
+ await context.resume();
+ const engine=new DJEngine(()=>context);
+ let mix;
+ try{
+  const rate=44100, count=rate*1.5, bytes=new ArrayBuffer(44+count*2), wav=new DataView(bytes);
+  const tag=(offset,text)=>[...text].forEach((letter,index)=>wav.setUint8(offset+index,letter.charCodeAt(0)));
+  tag(0,'RIFF');wav.setUint32(4,bytes.byteLength-8,true);tag(8,'WAVE');tag(12,'fmt ');wav.setUint32(16,16,true);wav.setUint16(20,1,true);wav.setUint16(22,1,true);wav.setUint32(24,rate,true);wav.setUint32(28,rate*2,true);wav.setUint16(32,2,true);wav.setUint16(34,16,true);tag(36,'data');wav.setUint32(40,count*2,true);
+  for(let i=0;i<count;i++)wav.setInt16(44+i*2,Math.sin(i/rate*2*Math.PI*220)*8000,true);
+  const file=new Blob([bytes],{type:'audio/wav'});
+  const track={id:'out',title:'Starting track',artist:'Cue test',genre:'Electronic',url:'',file,duration:1.5,bpm:128,key:'C maj',camelot:'8B',energy:5,color:'#abc',source:'local',analysis:{peaks:[],energyCurve:[],bpm:128,beatOffset:0,key:'C maj',camelot:'8B',energy:5,confidence:1}};
+  const higher={...track,id:'higher',title:'Higher energy',energy:7}, lower={...track,id:'lower',title:'Lower energy',energy:3};
+  const pool=[track,lower,higher,higher], loaded=[];
+  const session={...defaultDatabase.session,mixIntent:'lift',transitionTechnique:'cut',transitionCues:Object.fromEntries(pool.map(track=>[track.id,{entry:0,exit:0.4}]))};
+  engine.setMaster(0);
+  await engine.load('A',track);await engine.load('B',lower);
+  mix=new AutomixSession(engine,()=>({pool,session,cues:{},labels:{}}),async(id,track)=>{loaded.push(track.id);await engine.load(id,track)},()=>{},()=>{});
+  await mix.start('A');
+  assert(engine.state.B.track.id==='higher','Lift energy chooses the best next track instead of the preloaded lower-energy track');
+  assert(engine.state.autoPlan.id==='cut'&&engine.state.autoPlan.outStart===0.4&&engine.state.autoPlan.inStart===0,'Chosen Hard Cut and entry/exit cues are retained');
+  const deadline=performance.now()+10000;
+  while(mix.state.phase!=='complete'&&performance.now()<deadline)await new Promise(resolve=>setTimeout(resolve,50));
+  assert(mix.state.phase==='complete'&&!mix.state.active,'Real audio clock finishes the entire continuous mix');
+  assert(new Set(mix.state.playedIds).size===3&&loaded.join(',')==='higher,lower','Every unique track plays once and duplicate pool entries are ignored');
+  assert(!engine.state.A.playing&&!engine.state.B.playing,'Final track ends naturally with both decks stopped');
+  await mix.start('A');
+  assert(!mix.state.active&&!engine.state.A.playing,'Enabling again cannot silently replay an exhausted collection');
+  mix.resetHistory();
+  assert(mix.state.playedIds.length===0&&engine.state.A.position===0,'Explicit history reset prepares a fresh mix without starting playback');
+  const row=document.createElement('li');row.textContent='All Automix browser checks passed.';results.append(row);
+ }catch(error){const row=document.createElement('li');row.className='fail';row.textContent=String(error.stack||error);results.append(row)}
+ finally{mix?.dispose();engine.dispose()}
+};
+</script>

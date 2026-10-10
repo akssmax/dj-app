@@ -1,0 +1,75 @@
+[
+  {
+    "id": "blend",
+    "earlyOut": 0.05600560358074378,
+    "earlyIn": 0.001238737502761196,
+    "lateOut": 0,
+    "lateIn": 0.05601932635748744,
+    "pass": true
+  },
+  {
+    "id": "bass",
+    "earlyOut": 0.05600560358074378,
+    "earlyIn": 0.0005656689594436092,
+    "lateOut": 0,
+    "lateIn": 0.05601932635748744,
+    "pass": true
+  },
+  {
+    "id": "filter",
+    "earlyOut": 0.06256193118290354,
+    "earlyIn": 0.0005656689594436092,
+    "lateOut": 0,
+    "lateIn": 0.05601932635748744,
+    "pass": true
+  },
+  {
+    "id": "loop",
+    "earlyOut": 0.05600560358074378,
+    "earlyIn": 0.0005656689594436092,
+    "lateOut": 0,
+    "lateIn": 0.05601932635748744,
+    "pass": true
+  },
+  {
+    "id": "echo",
+    "earlyOut": 0.0295368312630277,
+    "earlyIn": 0,
+    "lateOut": 1.946062745307891e-7,
+    "lateIn": 0.05601932635748747,
+    "pass": true
+  },
+  {
+    "id": "reverb",
+    "earlyOut": 0.028881892789629365,
+    "earlyIn": 0,
+    "lateOut": 0,
+    "lateIn": 0.05601932635748747,
+    "pass": true
+  },
+  {
+    "id": "fade",
+    "earlyOut": 0.05600560358074378,
+    "earlyIn": 0.001232142481640572,
+    "lateOut": 0,
+    "lateIn": 0.05601932635748747,
+    "pass": true
+  },
+  {
+    "id": "cut",
+    "earlyOut": 3.430194295892723e-18,
+    "earlyIn": 0.05601932635748707,
+    "lateOut": 0,
+    "lateIn": 0.05601932635748747,
+    "pass": true
+  },
+  {
+    "id": "takeover",
+    "earlyOut": 0.05601932635748705,
+    "earlyIn": 0,
+    "lateOut": 0.05601932635748744,
+    "lateIn": 0,
+    "pass": true
+  }
+]
+PASS: Eight real audio execution families hand off A to B; MIDI takeover cancels scheduled B launch and FX

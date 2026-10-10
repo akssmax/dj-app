@@ -1,0 +1,173 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Cue audio render verification</title>
+  </head>
+  <body style="font: 16px monospace; padding: 24px">
+    <h1>Cue audio render verification</h1>
+    <button id="run">Render actual engine</button>
+    <pre id="results">Ready</pre>
+    <button id="automix">Render automix routines</button>
+    <pre id="auto-results">Ready</pre>
+    <script type="module">
+      import { DJEngine } from "/src/lib/dj/engine.ts"
+      import { planTransitions } from "/src/lib/dj/planner.ts"
+      class RenderContext extends OfflineAudioContext {
+        constructor(seconds = 3) {
+          super(2, 44100 * seconds, 44100)
+        }
+        resume() {
+          return Promise.resolve()
+        }
+        close() {
+          return Promise.resolve()
+        }
+        createMediaStreamDestination() {
+          return this.createGain()
+        }
+      }
+      function tone() {
+        const frames = 4410,
+          bytes = new ArrayBuffer(44 + frames * 2),
+          view = new DataView(bytes)
+        const str = (o, s) =>
+          [...s].forEach((c, i) => view.setUint8(o + i, c.charCodeAt(0)))
+        str(0, "RIFF")
+        view.setUint32(4, 36 + frames * 2, true)
+        str(8, "WAVE")
+        str(12, "fmt ")
+        view.setUint32(16, 16, true)
+        view.setUint16(20, 1, true)
+        view.setUint16(22, 1, true)
+        view.setUint32(24, 44100, true)
+        view.setUint32(28, 88200, true)
+        view.setUint16(32, 2, true)
+        view.setUint16(34, 16, true)
+        str(36, "data")
+        view.setUint32(40, frames * 2, true)
+        for (let i = 0; i < frames; i++)
+          view.setInt16(
+            44 + i * 2,
+            Math.sin((i / 44100) * Math.PI * 2 * 440) * 5000,
+            true
+          )
+        return new Blob([bytes], { type: "audio/wav" })
+      }
+      const rms = (data, start, end) => {
+        let sum = 0
+        for (let i = Math.floor(start * 44100); i < end * 44100; i++)
+          sum += data[i] ** 2
+        return Math.sqrt(sum / ((end - start) * 44100))
+      }
+      document.querySelector("#run").onclick = async () => {
+        const result = document.querySelector("#results")
+        result.textContent = "Rendering…"
+        try {
+          const rows = []
+          for (const effect of ["dry", "echo", "reverb"]) {
+            const context = new RenderContext(),
+              engine = new DJEngine(() => context)
+            const analysis = {
+              peaks: [0.1, 0.2, 0.1],
+              energyCurve: [],
+              bpm: 120,
+              beatOffset: 0,
+              key: null,
+              camelot: null,
+              energy: 5,
+              confidence: 0.5,
+            }
+            await engine.load("B", {
+              id: "render",
+              title: "Test tone",
+              artist: "Generated",
+              source: "local",
+              file: tone(),
+              url: "",
+              duration: 0.1,
+              bpm: 120,
+              key: null,
+              camelot: null,
+              energy: 5,
+              color: "orange",
+              analysis,
+            })
+            engine.setCrossfade(1)
+            engine.setParam("B", "volume", 1)
+            if (effect !== "dry")
+              engine.setFX("B", {
+                type: effect,
+                enabled: true,
+                amount: 0.8,
+                beats: 0.5,
+              })
+            await engine.play("B")
+            const rendered = await context.startRendering(),
+              data = rendered.getChannelData(0)
+            const direct = rms(data, 0.02, 0.08),
+              tail = rms(data, 0.26, 0.32),
+              late = rms(data, 2.5, 2.9),
+              finite = [...data].every(Number.isFinite)
+            rows.push({
+              effect,
+              direct,
+              tail,
+              late,
+              pass:
+                finite &&
+                direct > 0.01 &&
+                (effect === "dry" ? tail < 0.00001 : tail > 0.001) &&
+                late < 0.001,
+            })
+            engine.dispose()
+          }
+          result.textContent =
+            JSON.stringify(rows, null, 2) +
+            "\n" +
+            (rows.every((r) => r.pass)
+              ? "PASS: Actual right-deck audio, echo tail, reverb tail and bounded decay"
+              : "FAIL: Inspect rendered levels")
+        } catch (error) {
+          result.textContent = "FAIL: " + error.stack
+        }
+      }
+
+      function stereoTone(side) {
+        const frames = 44100 * 8, bytes = new ArrayBuffer(44 + frames * 4), view = new DataView(bytes)
+        const str = (o, s) => [...s].forEach((c, i) => view.setUint8(o + i, c.charCodeAt(0)))
+        str(0, "RIFF"); view.setUint32(4, 36 + frames * 4, true); str(8, "WAVE"); str(12, "fmt ")
+        view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 2, true)
+        view.setUint32(24, 44100, true); view.setUint32(28, 44100 * 4, true); view.setUint16(32, 4, true); view.setUint16(34, 16, true)
+        str(36, "data"); view.setUint32(40, frames * 4, true)
+        for (let i = 0; i < frames; i++) view.setInt16(44 + i * 4 + side * 2, (Math.sin(i / 44100 * Math.PI * 2 * 80) * 0.7 + Math.sin(i / 44100 * Math.PI * 2 * 1000) * 0.3) * 5000, true)
+        return new Blob([bytes], { type: "audio/wav" })
+      }
+      document.querySelector("#automix").onclick = async () => {
+        const result = document.querySelector("#auto-results")
+        result.textContent = "Rendering…"
+        try {
+          const rows = []
+          for (const id of ["blend", "bass", "filter", "loop", "echo", "reverb", "fade", "cut", "takeover"]) {
+            const context = new RenderContext(8), engine = new DJEngine(() => context)
+            const base = { title: "Generated verification tone", artist: "Generated", source: "local", url: "", duration: 8, bpm: 120, key: "C maj", camelot: "8B", energy: 5, genre: "House", color: "lime", analysis: { peaks: [0.1, 0.2, 0.1], energyCurve: [], bpm: 120, beatOffset: 0, key: "C maj", camelot: "8B", energy: 5, confidence: 0.5 } }
+            await engine.load("A", { ...base, id: "auto-A", file: stereoTone(0) })
+            await engine.load("B", { ...base, id: "auto-B", file: stereoTone(1) })
+            const candidate = planTransitions(engine.state.A.track, engine.state.B.track).find((p) => p.id === (id === "takeover" ? "echo" : id))
+            if (!candidate) throw new Error("Missing candidate: " + id)
+            await engine.startAuto("A", { ...candidate, duration: id === "cut" ? 0.08 : 4 }, true)
+            // Let the engine's public timer prepare its Web Audio events while offline time is still zero.
+            await new Promise((resolve) => setTimeout(resolve, 100))
+            if (engine.state.error) throw new Error(engine.state.error)
+            if (id === "takeover") engine.setHardwareConnected(true)
+            const rendered = await context.startRendering(), left = rendered.getChannelData(0), right = rendered.getChannelData(1)
+            const earlyOut = rms(left, 0.2, 0.4), earlyIn = rms(right, 0.2, 0.4), lateOut = rms(left, 6.5, 7), lateIn = rms(right, 6.5, 7)
+            const pass = [...left, ...right].every(Number.isFinite) && (id === "takeover" ? lateOut > 0.01 && lateIn < 0.00001 : lateIn > 0.01 && lateOut < 0.002 && (id === "cut" ? earlyIn > earlyOut : earlyOut > earlyIn))
+            rows.push({ id, earlyOut, earlyIn, lateOut, lateIn, pass })
+            engine.dispose()
+          }
+          result.textContent = JSON.stringify(rows, null, 2) + "\n" + (rows.every((r) => r.pass) ? "PASS: Eight real audio execution families hand off A to B; MIDI takeover cancels scheduled B launch and FX" : "FAIL: Inspect rendered levels")
+        } catch(error) { result.textContent = "FAIL: " + error.stack }
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,24 @@
+[
+  {
+    "effect": "dry",
+    "direct": 0.06254197595741051,
+    "tail": 0,
+    "late": 0,
+    "pass": true
+  },
+  {
+    "effect": "echo",
+    "direct": 0.06254197595741051,
+    "tail": 0.043805540881826886,
+    "late": 0.000004092578786079319,
+    "pass": true
+  },
+  {
+    "effect": "reverb",
+    "direct": 0.0625907656920464,
+    "tail": 0.006743480196726373,
+    "late": 0,
+    "pass": true
+  }
+]
+PASS: Actual right-deck audio, echo tail, reverb tail and bounded decay

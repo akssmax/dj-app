@@ -1,19 +1,97 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { Button } from "@/components/ui/button"
+import { lazy, Suspense } from "react"
+import { Library } from "@/components/dj/library"
+import { TransitionCoach, TransitionPlanner } from "@/components/dj/transitions"
+import { useDJ, useEngine } from "@/components/dj/provider"
+import { Icon } from "@/components/dj/icons"
+import { LibraryTransport } from "@/components/dj/library-transport"
 
-export const Route = createFileRoute("/")({ component: App })
+const Decks = lazy(() => import("@/components/dj/performance-layout"))
+const ParallelWaveforms = lazy(() =>
+  import("@/components/dj/parallel-waveforms").then((module) => ({
+    default: module.ParallelWaveforms,
+  }))
+)
 
-function App() {
+export const Route = createFileRoute("/")({ component: Studio })
+function Studio() {
+  const { engine, coachOpen, setCoachOpen, layout, ready } = useDJ(),
+    error = useEngine((state) => state.error)
+  if (!ready)
+    return (
+      <div className="studio-loading" role="status">
+        Opening your saved library…
+      </div>
+    )
   return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
+    <>
+      {error && (
+        <div className="engine-error" role="alert">
+          <Icon name="info" />
+          {error}
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={() => engine?.clearError()}
+            aria-label="Dismiss audio error"
+          >
+            <Icon name="close" />
+          </Button>
+        </div>
+      )}
+      <div className="studio-strip">
+        <div className="coach-top-slot">
+          <TransitionCoach />
+          {!coachOpen && (
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => setCoachOpen(true)}
+            >
+              <Icon name="book" size={13} />
+              Show transition coach
+              <Icon name="right" size={12} />
+            </Button>
+          )}
         </div>
       </div>
-    </div>
+      {layout === "parallel" && (
+        <section
+          className="transition-workspace"
+          aria-label="Waveforms and transition assistant"
+        >
+          <Suspense
+            fallback={
+              <p className="muted" role="status">
+                Loading waveforms…
+              </p>
+            }
+          >
+            <ParallelWaveforms />
+          </Suspense>
+          <TransitionPlanner />
+        </section>
+      )}
+      {layout !== "library" && (
+        <Suspense
+          fallback={
+            <p className="muted" role="status">
+              Loading decks…
+            </p>
+          }
+        >
+          <Decks />
+        </Suspense>
+      )}
+      {layout === "library" && <LibraryTransport />}
+      <section
+        className="library-grid library-full-width"
+        aria-label="Music library and automix planner"
+      >
+        <Library />
+        {/* {layout !== "parallel" && <TransitionPlanner />} */}
+      </section>
+    </>
   )
 }

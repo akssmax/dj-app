@@ -1,8 +1,9 @@
 import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router"
-import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools"
-import { TanStackDevtools } from "@tanstack/react-devtools"
+import { DJProvider } from "@/components/dj/provider"
+import { AppShell } from "@/components/dj/shell"
 
 import appCss from "../styles.css?url"
+import themeCss from "../themes.css?url"
 
 export const Route = createRootRoute({
   head: () => ({
@@ -15,7 +16,7 @@ export const Route = createRootRoute({
         content: "width=device-width, initial-scale=1",
       },
       {
-        title: "TanStack Start Starter",
+        title: "Cue — DJ studio",
       },
     ],
     links: [
@@ -23,6 +24,7 @@ export const Route = createRootRoute({
         rel: "stylesheet",
         href: appCss,
       },
+      { rel: "stylesheet", href: themeCss },
     ],
   }),
   notFoundComponent: () => (
@@ -36,23 +38,14 @@ export const Route = createRootRoute({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark" data-theme="graphite">
       <head>
         <HeadContent />
       </head>
       <body>
-        {children}
-        <TanStackDevtools
-          config={{
-            position: "bottom-right",
-          }}
-          plugins={[
-            {
-              name: "Tanstack Router",
-              render: <TanStackRouterDevtoolsPanel />,
-            },
-          ]}
-        />
+        <DJProvider>
+          <AppShell>{children}</AppShell>
+        </DJProvider>
         <Scripts />
       </body>
     </html>

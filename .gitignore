@@ -14,3 +14,6 @@ todos.json
 
 # typescript
 *.tsbuildinfo
+
+# Local diagnostic captures may contain personal library metadata.
+artifacts/

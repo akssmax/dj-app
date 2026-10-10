@@ -1,0 +1,40 @@
+<!doctype html><meta charset="utf-8"><title>Cue scratch audio verification</title>
+<style>body{font:16px system-ui;padding:24px}button{font:inherit;padding:12px}pre{white-space:pre-wrap}</style>
+<h1>Continuous scratch verification</h1><p>Silent synthetic audio. This check uses a separate audio graph and does not change studio tracks or MIDI handlers.</p><button id="run">Run scratch checks</button><pre id="result">Ready</pre>
+<script type="module">
+import {registerScratch,createScratchNode} from '/src/lib/dj/scratch-control.ts';
+import {DJEngine} from '/src/lib/dj/engine.ts';
+const out=document.querySelector('#result');
+document.querySelector('#run').onclick=async()=>{
+ const ctx=new AudioContext({latencyHint:'interactive'});let node,engine,url;
+ const checks=[],assert=(condition,label)=>{if(!condition)throw Error(label);checks.push('PASS '+label)};
+ const settle=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ try {
+  await ctx.resume();await registerScratch(ctx);
+  const buffer=ctx.createBuffer(1,ctx.sampleRate*4,ctx.sampleRate),samples=buffer.getChannelData(0);
+  for(let i=0;i<samples.length;i++)samples[i]=Math.sin(i/ctx.sampleRate*2*Math.PI*220)*0.25;
+  node=createScratchNode(ctx,buffer);let processorError=false;node.onprocessorerror=()=>{processorError=true};
+  const analyser=ctx.createAnalyser();analyser.fftSize=256;node.connect(analyser);const silent=ctx.createGain();silent.gain.value=0;analyser.connect(silent);silent.connect(ctx.destination);
+  await settle(25);const measured=new Float32Array(256),rms=()=>{analyser.getFloatTimeDomainData(measured);return Math.sqrt(measured.reduce((sum,x)=>sum+x*x,0)/measured.length)};
+  node.port.postMessage({type:'move',position:1.025,delta:.025,time:ctx.currentTime});await settle(10);assert(rms()>.01,'Worklet generates forward scratch audio');
+  node.port.postMessage({type:'stop'});await settle(40);assert(rms()<.001,'Release clears the scratch signal');
+  node.port.postMessage({type:'move',position:.975,delta:-.025,time:ctx.currentTime});await settle(10);assert(rms()>.01,'Worklet generates reverse scratch audio');
+  for(let i=0;i<2000;i++)node.port.postMessage({type:'move',position:1+(i%4)*.001,delta:i%2?.001:-.001,time:ctx.currentTime});
+  node.port.postMessage({type:'stop'});await settle(80);assert(!processorError&&rms()<.001,'A 2,000-message burst stays finite and stops cleanly');
+  node.disconnect();node.port.close();node=undefined;
+  const rate=44100,length=rate*4,wav=new ArrayBuffer(44+length*2),view=new DataView(wav),tag=(offset,text)=>[...text].forEach((letter,i)=>view.setUint8(offset+i,letter.charCodeAt(0)));
+  tag(0,'RIFF');view.setUint32(4,wav.byteLength-8,true);tag(8,'WAVE');tag(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,rate,true);view.setUint32(28,rate*2,true);view.setUint16(32,2,true);view.setUint16(34,16,true);tag(36,'data');view.setUint32(40,length*2,true);
+  for(let i=0;i<length;i++)view.setInt16(44+i*2,Math.sin(i/rate*2*Math.PI*220)*8000,true);
+  url=URL.createObjectURL(new Blob([wav],{type:'audio/wav'}));engine=new DJEngine(()=>ctx);engine.setMaster(0);
+  const track={id:'scratch-check',title:'Scratch check',artist:'Cue',genre:'Test',url,duration:4,bpm:120,key:null,camelot:null,energy:5,color:'#abc',source:'demo',analysis:{peaks:[],energyCurve:[],bpm:120,beatOffset:0,key:null,camelot:null,energy:5,confidence:1}};
+  await engine.load('A',track);await settle(30);assert(!!engine.channels.A.scratch,'Deck prepares one continuous scratch node on load');
+  engine.seek('A',2);await engine.play('A');engine.handleControllerAction({type:'jogTouch',deck:'A',value:1});engine.handleControllerAction({type:'jogTouch',deck:'A',value:1});
+  const scratch=engine.channels.A.scratch;for(let i=0;i<100;i++)engine.jog('A',i%2?1:-1);
+  assert(engine.channels.A.scratch===scratch && !engine.state.A.playing,'Jog packets reuse the scratch node while normal playback is held');
+  engine.handleControllerAction({type:'jogTouch',deck:'A',value:0});await settle(20);assert(engine.state.A.playing,'Repeated touch packets preserve playback resume on release');
+  engine.handleControllerAction({type:'jogTouch',deck:'A',value:1});engine.pause('A');engine.handleControllerAction({type:'jogTouch',deck:'A',value:0});await settle(20);assert(!engine.state.A.playing,'An explicit Stop during touch prevents an unwanted restart');
+  out.textContent=checks.join('\n')+'\nAll scratch checks passed.';
+ }catch(error){out.textContent=checks.join('\n')+'\nFAIL '+error.stack}
+ finally{node?.disconnect();node?.port.close();engine?.dispose();if(ctx.state!=='closed')await ctx.close();if(url)URL.revokeObjectURL(url)}
+};
+</script>

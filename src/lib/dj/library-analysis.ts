@@ -1,0 +1,101 @@
+import { readLinkedFile } from "./linked-files"
+import type { Analysis, Track } from "./types"
+
+// One file at a time; decoding never starts playback or replaces a deck.
+export async function analyzeLibraryTrack(track: Track, signal: AbortSignal) {
+  if (!track.linkedFile) throw new Error("This track has no linked file.")
+  const file = await readLinkedFile(track.linkedFile)
+  if (file.size > 80 * 1024 * 1024)
+    throw new Error(
+      "File exceeds the 80 MB analysis limit. Load a deck to play it."
+    )
+  signal.throwIfAborted()
+  const context = new OfflineAudioContext(1, 1, 44100)
+  const buffer = await context.decodeAudioData(await file.arrayBuffer())
+  signal.throwIfAborted()
+  const analysis = await new Promise<Analysis>((resolve, reject) => {
+    const worker = new Worker(
+      new URL("./analysis.worker.ts", import.meta.url),
+      {
+        type: "module",
+      }
+    )
+    const cleanup = () => {
+      clearTimeout(timer)
+      signal.removeEventListener("abort", abort)
+      worker.terminate()
+    }
+    const fail = (error: Error) => {
+      cleanup()
+      reject(error)
+    }
+    const abort = () =>
+      fail(new DOMException("Analysis cancelled", "AbortError"))
+    const timer = setTimeout(
+      () =>
+        fail(
+          new Error("Analysis timed out. Retry when the device is less busy.")
+        ),
+      60000
+    )
+    signal.addEventListener("abort", abort, { once: true })
+    worker.onmessage = (event: MessageEvent<Analysis>) => {
+      cleanup()
+      resolve({ ...event.data, analyzedAt: new Date().toISOString() })
+    }
+    worker.onerror = () => fail(new Error("Audio analysis failed. Try again."))
+    worker.onmessageerror = () =>
+      fail(new Error("Could not read analysis. Try again."))
+    try {
+      const channels = Array.from({ length: buffer.numberOfChannels }, (_, c) =>
+        buffer.getChannelData(c).slice()
+      )
+      worker.postMessage(
+        { channels, sampleRate: buffer.sampleRate },
+        channels.map((c) => c.buffer)
+      )
+    } catch (error) {
+      fail(error instanceof Error ? error : new Error(String(error)))
+    }
+  })
+  return { analysis, duration: buffer.duration }
+}
+
+export function mergeLibraryAnalysis(
+  track: Track,
+  analysis: Analysis,
+  duration: number
+): Track {
+  return {
+    ...track,
+    analysis,
+    duration,
+    bpm: track.grid?.bpm ?? track.bpm ?? analysis.bpm,
+    key: analysis.key,
+    camelot: analysis.camelot,
+    energy: analysis.energy,
+  }
+}
+
+export function linkedFingerprint(track: Track) {
+  return `${track.id}:${track.linkedFile?.size}:${track.linkedFile?.lastModified}`
+}
+
+export function mergeScannedTracks(scanned: Track[], current: Track[]) {
+  const latest = new Map(current.map((track) => [track.id, track]))
+  return scanned.map((track) => {
+    const saved = latest.get(track.id)
+    // A worker or grid edit may finish while the directory scan is awaiting I/O.
+    // Keep those updates only when they refer to the same file version.
+    return saved && linkedFingerprint(saved) === linkedFingerprint(track)
+      ? {
+          ...track,
+          ...saved,
+          title: track.title,
+          artist: track.artist,
+          linkedFile: track.linkedFile,
+          available: track.available,
+        }
+      : track
+  })
+}

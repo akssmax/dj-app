@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Timeline gesture integration check</title>
+<style>body{font:14px system-ui;background:#101318;color:#e8eef8;padding:20px}button{min-height:44px;padding:10px 16px}iframe{width:100%;height:740px;border:1px solid #465260;margin-top:16px}li{margin:8px 0}.pass{color:#86e4a6}.fail{color:#ff8989}</style>
+<h1>Timeline gesture integration check</h1>
+<p>Uses the actual studio in an iframe. Synthetic pinch events check gesture wiring and metadata isolation; physical trackpad feel still needs manual testing. Playback remains paused.</p>
+<button id="run">Run timeline checks</button><ol id="results"></ol>
+<iframe src="/" title="Test studio"></iframe>
+<script type="module">
+const frame = document.querySelector('iframe'), results = document.querySelector('#results')
+const paint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+const assert = (condition, message) => { const li = document.createElement('li'); li.textContent = `${condition ? 'PASS' : 'FAIL'}: ${message}`; li.className = condition ? 'pass' : 'fail'; results.append(li); if (!condition) throw new Error(message) }
+const close = (a, b) => Math.abs(a - b) < 0.01
+let running = false
+document.querySelector('#run').onclick = async () => {
+  if (running) return; running = true; results.textContent = ''
+  try {
+    let doc
+    for (let i = 0; i < 300; i++) {
+      doc = frame.contentDocument
+      if (doc?.querySelector('.layout-tabs [role=tab]')) break
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    const layout = doc.querySelector('.layout-tabs [role=tab]')
+    layout?.click(); await paint()
+    let wave
+    for (let i = 0; i < 300; i++) {
+      wave = doc.querySelector('.deck .waveform')
+      if (wave && doc.querySelector('[aria-label="Zoom in deck A timeline"]')) break
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    assert(!!wave, 'Real deck waveform is ready')
+    const read = () => ({ start: +wave.dataset.viewStart, end: +wave.dataset.viewEnd })
+    const initial = read(), length = initial.end - initial.start
+    const time = () => doc.querySelector('.deck-lime .deck-time').textContent
+    const tempo = () => doc.querySelector('.deck-lime .tempo-adjust').textContent
+    const beforeTime = time(), beforeTempo = tempo()
+    const rect = wave.getBoundingClientRect()
+    const clientX = Math.round(rect.left + rect.width * 0.4)
+    const pointer = (clientX - rect.left) / rect.width
+    const wheel = (data) => { const event = new frame.contentWindow.WheelEvent('wheel', { bubbles:true, cancelable:true, clientX, deltaMode:0, ...data }); wave.dispatchEvent(event); return event }
+    let captured = 0
+    for (let i = 0; i < 25; i++) if (wheel({ ctrlKey:true, deltaY:-2 }).defaultPrevented) captured++
+    assert(captured === 25, 'All 25 pinch packets captured by timeline')
+    await paint()
+    const zoomed = read(), zoomLength = zoomed.end - zoomed.start
+    assert(close(zoomLength, length / Math.exp(0.5)), 'Rapid packets accumulate without losing zoom updates')
+    assert(close(zoomed.start + zoomLength * pointer, initial.start + length * pointer), 'Time beneath pointer is anchored')
+    assert(time() === beforeTime && tempo() === beforeTempo, 'Pinch does not seek or change tempo')
+    assert(!wheel({ ctrlKey:false, deltaY:60, deltaX:0 }).defaultPrevented, 'Ordinary page scrolling is untouched')
+    assert(wheel({ ctrlKey:false, deltaX:80, deltaY:0 }).defaultPrevented, 'Horizontal scroll pans the zoomed timeline')
+    await paint(); assert(read().start > zoomed.start && time() === beforeTime, 'Panning moves only the visible window')
+    const gesture = (type, data) => { const event = new frame.contentWindow.Event(type, { bubbles:true, cancelable:true }); Object.assign(event, data); wave.dispatchEvent(event) }
+    const beforeGesture = read()
+    gesture('gesturestart', { clientX, scale:1 }); gesture('gesturechange', { scale:2 }); gesture('gesturechange', { scale:4 }); gesture('gestureend', {})
+    await paint(); assert(close(read().end - read().start, (beforeGesture.end - beforeGesture.start)/4), 'Safari gesture scale stays relative to the gesture start')
+    doc.querySelector('[aria-label="Fit deck A timeline"]').click(); await paint()
+    assert(close(read().start, initial.start) && close(read().end, initial.end), 'Fit restores the full timeline')
+    assert(time() === beforeTime, 'All navigation leaves playback position unchanged')
+  } catch (error) { const p = document.createElement('p'); p.textContent = String(error); results.append(p) }
+  finally { running = false }
+}
+</script>
+</html>

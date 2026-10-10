@@ -1,0 +1,86 @@
+<!doctype html><meta charset="utf-8"><title>Cue controller verification</title>
+<style>body{font:16px system-ui;padding:32px;white-space:pre-wrap}button{font:inherit;padding:12px}</style>
+<h1>FLX4 browser verification</h1><button id="run">Run controller checks</button><pre id="result">Ready</pre>
+<script type="module">
+import { DJEngine } from '/src/lib/dj/engine.ts';
+import { FLX4Decoder } from '/src/lib/dj/midi.ts';
+const out=document.querySelector('#result');
+document.querySelector('#run').onclick=async()=>{
+ document.querySelector('#run').disabled=true;
+ const ctx=new AudioContext({latencyHint:'interactive'});
+ await ctx.resume();
+ const engine=new DJEngine(()=>ctx);
+ const checks=[]; let wavUrl;
+ const assert=(condition,label)=>{if(!condition)throw new Error(label);checks.push('PASS '+label)};
+ const frame=()=>new Promise(resolve=>requestAnimationFrame(resolve));
+ try {
+  const access=await navigator.requestMIDIAccess({sysex:false});
+  const inputs=[...access.inputs.values()].filter(input=>input.state==='connected');
+  assert(inputs.some(input=>/FLX4/i.test(input.name||'')), 'Physical FLX4 MIDI port connected');
+  checks.push('Controller: '+inputs.map(input=>input.name).join(', '));
+  const rate=44100, length=rate*8, wav=new ArrayBuffer(44+length*2), view=new DataView(wav);
+  const tag=(offset,text)=>[...text].forEach((letter,index)=>view.setUint8(offset+index,letter.charCodeAt(0)));
+  tag(0,'RIFF');view.setUint32(4,wav.byteLength-8,true);tag(8,'WAVE');tag(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,rate,true);view.setUint32(28,rate*2,true);view.setUint16(32,2,true);view.setUint16(34,16,true);tag(36,'data');view.setUint32(40,length*2,true);
+  for(let i=0;i<length;i++)view.setInt16(44+i*2,Math.sin(i/rate*2*Math.PI*220)*8000,true);
+  wavUrl=URL.createObjectURL(new Blob([wav],{type:'audio/wav'}));
+  const track={id:'controller-check',title:'Controller check',artist:'Cue',genre:'Test',url:wavUrl,duration:8,bpm:120,key:null,camelot:null,energy:0.5,color:'#abc',source:'demo',analysis:{peaks:[],energyCurve:[],bpm:120,beatOffset:0,key:null,camelot:null,energy:0.5,confidence:1}};
+  engine.setMaster(0); // This graph remains silent on the existing default output.
+  await engine.load('A',track);await engine.load('B',{...track,id:'controller-check-b',bpm:128});
+  engine.setHardwareConnected(true);await frame();
+  const decoder=new FLX4Decoder();let notifications=0;const unsubscribe=engine.subscribe(()=>notifications++);
+  const start=performance.now();
+  for(let i=0;i<5000;i++){
+   const value=i%128;
+   const action=decoder.decode([0xb6,i%2?0x3f:0x1f,value]);
+   if(action)engine.setCrossfade(action.value);
+  }
+  const duration=performance.now()-start, expected=engine.state.crossfade;
+  assert(notifications===0,'No per-packet React notification during a 5000-message burst');
+  await frame();assert(notifications===1,'Latest control state delivered in one display frame');
+  assert(engine.state.crossfade===expected,'Final fader value retained without interpolation');
+  checks.push('5000 CC messages: '+duration.toFixed(1)+' ms');
+  unsubscribe();
+  engine.setParam('A','low',-6.125);await frame();
+  assert(Math.abs(engine.channels.A.low.gain.value+6.125)<0.001,'Real Web Audio EQ parameter follows MIDI value');
+  engine.handleControllerAction(decoder.decode([0x90,0x1e,127]));
+  assert(engine.state.A.padMode==='padfx1','Hardware pad-mode message selects Pad FX 1');
+  engine.handleControllerAction(decoder.decode([0x97,0x10,127]));await frame();
+  assert(engine.channels.A.echoSend.gain.value>0,'Pad FX press enables real echo audio send');
+  engine.handleControllerAction(decoder.decode([0x87,0x10,0]));await frame();
+  assert(engine.channels.A.echoSend.gain.value===0 && engine.state.A.activePads.length===0,'Pad release restores the audio send');
+  engine.beatjump('A',1);assert(Math.abs(engine.state.A.position-0.5)<0.001,'Beat jump follows the beatgrid');
+  assert(engine.sync('B') && Math.abs(engine.state.B.rate-120/128)<0.001,'Beat sync matches effective tempo');
+  await engine.triggerSample('A',0);assert(engine.state.A.samplerSlots[0].playing,'Sampler uses real AudioBufferSource playback');
+  engine.stopSample('A',0);assert(!engine.state.A.samplerSlots[0].playing,'Sampler stop clears playback');
+  engine.seek('A',1);engine.handleControllerAction({type:'jogTouch',deck:'A',value:1});engine.jog('A',-1);
+  assert(!!engine.channels.A.scratch,'Continuous scratch processor prepared when the track loads');
+  await new Promise(resolve=>setTimeout(resolve,15));
+  const scrubSamples=new Float32Array(256);engine.channels.A.inputAnalyser.getFloatTimeDomainData(scrubSamples);
+  assert(scrubSamples.some(sample=>Math.abs(sample)>0.001),'Touched jog produces real continuous reverse scrub audio');
+  engine.handleControllerAction({type:'jogTouch',deck:'A',value:0});assert(!engine.channels.A.scrubSource,'Touch release stops scrub audio');
+  const dispatch=packet=>{const action=decoder.decode(packet);if(action)engine.handleControllerAction(action)};
+  dispatch([0x91,11,127]);dispatch([0x91,11,127]);dispatch([0x91,11,0]);
+  assert(engine.state.B.playing,'Play press, repeated packet and release start once in real AudioContext');
+  dispatch([0x91,11,127]);dispatch([0x81,11,0]);
+  assert(!engine.state.B.playing,'Second physical tap pauses the deck');
+  engine.seek('A',0);engine.setParam('A','rate',1.08);await engine.play('A');
+  const analyser=engine.channels.A.inputAnalyser;analyser.fftSize=8192;
+  const samples=new Float32Array(analyser.fftSize);
+  const frequency=()=>{
+    analyser.getFloatTimeDomainData(samples);const crossings=[];
+    for(let i=1;i<samples.length;i++)if(samples[i-1]<0&&samples[i]>=0)crossings.push(i-1-samples[i-1]/(samples[i]-samples[i-1]));
+    return crossings.length>2?(crossings.length-1)*ctx.sampleRate/(crossings.at(-1)-crossings[0]):0;
+  };
+  const settle=()=>new Promise(resolve=>setTimeout(resolve,350));
+  await settle();assert(Math.abs(frequency()-237.6)<5,'Unlocked tempo changes the real tone frequency');
+  await engine.setKeyLock('A',true);await settle();
+  const locked=frequency();assert(Math.abs(locked-220)<5,'Key lock preserves 220 Hz at 1.08x tempo ('+locked.toFixed(2)+' Hz)');
+  await engine.setKeyShift('A',12);await settle();
+  const shifted=frequency();assert(Math.abs(shifted-440)<8,'Key shift raises real pitch one octave ('+shifted.toFixed(2)+' Hz)');
+  assert(engine.state.A.rate===1.08,'Pitch shifting retains tempo');engine.pause('A');
+  assert(!engine.state.controller.monitorConnected && !engine.state.controller.micEnabled,'Default speakers retained; headphone and mic outputs off');
+  out.textContent=checks.join('\n')+'\nAll browser checks passed.';
+ }catch(error){out.textContent=checks.join('\n')+'\nFAIL '+error.stack}
+ finally{engine.dispose();if(wavUrl)URL.revokeObjectURL(wavUrl)}
+};
+</script>
