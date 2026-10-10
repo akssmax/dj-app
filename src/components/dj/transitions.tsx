@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react"
+import type { CSSProperties } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -13,6 +14,7 @@ import {
 } from "@/components/ui/select"
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogTitle,
   DialogDescription,
@@ -342,12 +344,12 @@ export function TransitionCoach() {
     report,
     coachDetailsOpen: details,
     setCoachDetailsOpen: setDetails,
-    coachDetailsTab: detailsTab,
     setCoachDetailsTab: setDetailsTab,
   } = useDJ()
   const [initialTab, setInitialTab] = useState("recommended")
   const coach = useRef<HTMLDivElement>(null)
   const [popupTop, setPopupTop] = useState(80)
+  const [expanded, setExpanded] = useState(false)
   useEffect(() => {
     if (!details) return
     const position = () =>
@@ -599,31 +601,52 @@ export function TransitionCoach() {
             </DialogTrigger>
             <DialogContent
               showOverlay={false}
-              className="coach-floating-details"
-              style={{ top: popupTop }}
+              showCloseButton={false}
+              className={`coach-floating-details ${expanded ? "coach-panel-expanded" : ""}`}
+              style={{ "--coach-panel-top": `${popupTop}px` } as CSSProperties}
             >
-              <DialogTitle>Transition coach</DialogTitle>
+              <div className="coach-panel-heading">
+                <div>
+                  <span className="coach-panel-eyebrow">
+                    <Icon name="sparkles" size={13} /> MIX ASSISTANT
+                  </span>
+                  <DialogTitle>Transition coach</DialogTitle>
+                </div>
+                <div className="coach-panel-window-actions">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={
+                      expanded ? "Restore coach panel" : "Expand coach panel"
+                    }
+                    aria-pressed={expanded}
+                    title={expanded ? "Restore panel size" : "Expand panel"}
+                    onClick={() => setExpanded(!expanded)}
+                  >
+                    <Icon name={expanded ? "minimize" : "maximize"} size={16} />
+                  </Button>
+                  <DialogClose
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label="Close transition coach"
+                        title="Close panel"
+                      />
+                    }
+                  >
+                    <Icon name="close" size={18} />
+                  </DialogClose>
+                </div>
+              </div>
               <DialogDescription className="sr-only">
                 Transition choices, suggested cue pairs, and next tracks. The
                 decks remain available outside this view.
               </DialogDescription>
-              <div className="coach-detail-switch">
-                <Button
-                  variant={detailsTab === "explore" ? "secondary" : "ghost"}
-                  aria-pressed={detailsTab === "explore"}
-                  onClick={() => setDetailsTab("explore")}
-                >
-                  Transitions & cues
-                </Button>
-                <Button
-                  variant={detailsTab === "why" ? "secondary" : "ghost"}
-                  aria-pressed={detailsTab === "why"}
-                  onClick={() => setDetailsTab("why")}
-                >
-                  Why & steps
-                </Button>
-              </div>
-              <CoachDetails initialTab={initialTab} />
+              <CoachDetails
+                initialTab={initialTab}
+                onSectionChange={setInitialTab}
+              />
             </DialogContent>
           </Dialog>
           <Button
@@ -643,159 +666,245 @@ export function TransitionCoach() {
   )
 }
 
-function CoachDetails({ initialTab }: { initialTab: string }) {
+function CoachDetails({
+  initialTab,
+  onSectionChange,
+}: {
+  initialTab: string
+  onSectionChange: (tab: string) => void
+}) {
   const {
     coachDetailsTab: detailsTab,
+    setCoachDetailsTab,
+    setCoachDetailsOpen,
+    setLayout,
+    setTransitionPreview,
     midi,
     report,
     clearReport,
     automix,
     resetAutomixHistory,
   } = useDJ()
-  const { out, incoming, plan } = useTransitionPlan()
-  const state = useEngine()
-  return (
-    <div className="coach-floating-body">
-      {detailsTab === "explore" ? (
+  const { outId, inId, out, incoming, plan } = useTransitionPlan()
+  const state = useEngine((current) => ({
+    auto: current.auto,
+    autoLevels: current.autoLevels,
+  }))
+  const why = (
+    <>
+      <p className="muted">
+        {report
+          ? "Feedback describes your MIDI controls and estimated timing; listen to judge the sound."
+          : midi.connected
+            ? "Controller mode · automix disabled · you control both decks."
+            : "Practice using the decks below. Estimated grids need listening."}
+      </p>
+      <strong>{report ? report.title : "Why this transition works"}</strong>
+      {report ? (
         <>
-          {automix.playedIds.length > 0 && (
-            <div className="coach-row-actions">
-              <span className="muted">
-                {automix.playedIds.length} played · excluded from Automix
-              </span>
-              <Button
-                variant="ghost"
-                disabled={automix.active}
-                onClick={resetAutomixHistory}
-              >
-                Reset played tracks
-              </Button>
-            </div>
-          )}
-          <Suspense
-            fallback={
-              <p className="muted" role="status">
-                Loading transition cues…
-              </p>
-            }
-          >
-            <TransitionExplorer initialTab={initialTab} />
-          </Suspense>
+          <div className="feedback-score">
+            <strong>
+              {report.score}
+              <small>/ 100</small>
+            </strong>
+            <Badge variant="outline">CONTROL FEEDBACK</Badge>
+          </div>
+          <div className="feedback-metrics">
+            {[
+              ["Phrase timing", report.timing],
+              ["Tempo match", report.tempo],
+              ["Control shaping", report.control],
+            ].map(([label, score]) => (
+              <div key={label}>
+                <span>{label}</span>
+                <Progress value={Number(score)} />
+                <strong>{score}%</strong>
+              </div>
+            ))}
+          </div>
+          <div className="coach-steps">
+            {report.tips.map((tip, i) => (
+              <div key={tip}>
+                <span>{i + 1}</span>
+                <p>{tip}</p>
+              </div>
+            ))}
+          </div>
+          <Button variant="outline" onClick={clearReport}>
+            Practice another transition <Icon name="right" />
+          </Button>
         </>
       ) : (
         <>
-          <p className="muted">
-            {report
-              ? "Feedback describes your MIDI controls and estimated timing; listen to judge the sound."
-              : midi.connected
-                ? "Controller mode · automix disabled · you control both decks."
-                : "Practice using the decks below. Estimated grids need listening."}
-          </p>
-          <strong>{report ? report.title : "Why this transition works"}</strong>
-          {report ? (
-            <>
-              <div className="feedback-score">
-                <strong>
-                  {report.score}
-                  <small>/ 100</small>
-                </strong>
-                <Badge variant="outline">CONTROL FEEDBACK</Badge>
+          {plan && (
+            <div className="why-box">
+              <span className="eyebrow text-lime">
+                WHY {plan.name.toUpperCase()} WORKS
+              </span>
+              <p>{plan.description}</p>
+              <div className="technique-tags">
+                {plan.labels.map((label) => (
+                  <Badge key={label} variant="outline">
+                    {label}
+                  </Badge>
+                ))}
+                <Badge variant="secondary">LEVEL {plan.difficulty}</Badge>
               </div>
-              <div className="feedback-metrics">
-                {[
-                  ["Phrase timing", report.timing],
-                  ["Tempo match", report.tempo],
-                  ["Control shaping", report.control],
-                ].map(([label, score]) => (
-                  <div key={label}>
-                    <span>{label}</span>
-                    <Progress value={Number(score)} />
-                    <strong>{score}%</strong>
+              <div className="transition-reasons">
+                {plan.reasons.map((reason) => (
+                  <div key={reason}>
+                    <Icon name="check" size={14} />
+                    <span>{reason}</span>
                   </div>
                 ))}
               </div>
-              <div className="coach-steps">
-                {report.tips.map((tip, i) => (
-                  <div key={tip}>
-                    <span>{i + 1}</span>
-                    <p>{tip}</p>
-                  </div>
-                ))}
-              </div>
-              <Button variant="outline" onClick={clearReport}>
-                Practice another transition <Icon name="right" />
-              </Button>
-            </>
-          ) : (
-            <>
-              <div className="coach-tracks">
-                <span>{out.track?.title ?? "Deck A"}</span>
-                <Icon name="right" />
-                <span>{incoming.track?.title ?? "Deck B"}</span>
-              </div>
-              {plan && (
-                <div className="why-box">
-                  <span className="eyebrow text-lime">
-                    WHY {plan.name.toUpperCase()} WORKS
-                  </span>
-                  <p>{plan.description}</p>
-                  <div className="technique-tags">
-                    {plan.labels.map((label) => (
-                      <Badge key={label} variant="outline">
-                        {label}
-                      </Badge>
-                    ))}
-                    <Badge variant="secondary">LEVEL {plan.difficulty}</Badge>
-                  </div>
-                  <div className="transition-reasons">
-                    {plan.reasons.map((reason) => (
-                      <div key={reason}>
-                        <Icon name="check" size={14} />
-                        <span>{reason}</span>
-                      </div>
-                    ))}
+            </div>
+          )}
+          {plan && (
+            <div className="coach-steps">
+              {[
+                {
+                  label: "Prepare the incoming deck",
+                  detail: `Cue ${inId} at ${formatTime(plan.inStart)}. ${plan.beatmatch ? "Match the effective tempo and listen for drift." : "Keep the tempos natural; avoid forcing a long rhythmic overlap."}`,
+                },
+                {
+                  label: "Start on the outgoing phrase",
+                  detail: `Begin near ${formatTime(plan.outStart)} on ${outId}. Confirm the downbeat by ear.`,
+                },
+                ...plan.steps.map((step) => ({
+                  label: step.label,
+                  detail: step.why,
+                  time: formatTime(plan.outStart + step.at * plan.duration),
+                })),
+              ].map((step, i) => (
+                <div key={`${i}-${step.label}`}>
+                  <span>{String(i + 1).padStart(2, "0")}</span>
+                  <div className="coach-step-detail">
+                    <strong>{step.label}</strong>
+                    {"time" in step && (
+                      <time>
+                        {step.time} · {outId}
+                      </time>
+                    )}
+                    <p>{step.detail}</p>
                   </div>
                 </div>
-              )}
-              <div className="coach-steps">
-                {[
-                  `Prepare ${incoming.track?.title ?? "the incoming track"} at ${formatTime(plan?.inStart ?? 0)}. ${plan?.beatmatch ? "Match the effective tempo and listen for drift." : "Keep the tempos natural; avoid forcing a long rhythmic overlap."}`,
-                  `Begin near ${formatTime(plan?.outStart ?? 0)} on the estimated outgoing phrase. Confirm the downbeat by ear.`,
-                  ...(plan?.steps.map((step) => `${step.label}: ${step.why}`) ??
-                    []),
-                  ...(state.auto && state.autoLevels
-                    ? [
-                        state.autoLevels,
-                        "Crossfader stays at 50%; channel faders and EQ perform the handoff.",
-                      ]
-                    : []),
-                  ...(plan?.warnings ?? []),
-                ].map((step, i) => (
-                  <div key={step}>
-                    <span>{String(i + 1).padStart(2, "0")}</span>
-                    <p>{step}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="controller-input">
-                <span
-                  className={`status-dot ${midi.connected ? "connected" : ""}`}
-                />
-                {midi.connected ? (
-                  <MidiInputText />
-                ) : (
-                  "Connect a controller to receive MIDI feedback"
-                )}
-              </div>
-              <p className="muted text-xs">
-                For feedback, play both decks and make a complete crossfader
-                move from A to B or B to A. Dedicated headphone cue routing is
-                planned.
+              ))}
+            </div>
+          )}
+          {state.auto && state.autoLevels && (
+            <div className="coach-automix-note">
+              <strong>Automix levels</strong>
+              <p>{state.autoLevels}</p>
+              <p>
+                Crossfader at 50% · channel faders and EQ perform the handoff.
               </p>
-            </>
+            </div>
+          )}
+          {!!plan?.warnings.length && (
+            <div className="coach-plan-warnings">
+              <strong>Listen for</strong>
+              {plan.warnings.map((warning) => (
+                <p key={warning}>{warning}</p>
+              ))}
+            </div>
+          )}
+          <div className="controller-input">
+            <span
+              className={`status-dot ${midi.connected ? "connected" : ""}`}
+            />
+            {midi.connected ? (
+              <MidiInputText />
+            ) : (
+              "Connect a controller to receive MIDI feedback"
+            )}
+          </div>
+          {midi.connected && (
+            <p className="muted text-xs">
+              For controller feedback, play both decks and complete a manual
+              handoff.
+            </p>
           )}
         </>
       )}
-    </div>
+    </>
+  )
+  return (
+    <>
+      <div className="coach-selected-summary">
+        <div className="coach-selected-recipe">
+          <span className="coach-panel-eyebrow">CURRENT PLAN</span>
+          <strong>{plan?.name ?? "Load both decks"}</strong>
+        </div>
+        <div className="coach-selected-deck">
+          <span>{outId} · OUTGOING</span>
+          <strong title={out.track?.title}>
+            {out.track?.title ?? "No track loaded"}
+          </strong>
+          <time>
+            {plan ? `${formatTime(plan.outStart)} exit` : "Select a transition"}
+          </time>
+        </div>
+        <Icon name="right" size={16} />
+        <div className="coach-selected-deck">
+          <span>{inId} · INCOMING</span>
+          <strong title={incoming.track?.title}>
+            {incoming.track?.title ?? "No track loaded"}
+          </strong>
+          <time>
+            {plan ? `${formatTime(plan.inStart)} entry` : "Select a transition"}
+          </time>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!plan || out.loading || incoming.loading}
+          onClick={() => {
+            setLayout("parallel")
+            setTransitionPreview(true)
+            setCoachDetailsOpen(false)
+          }}
+        >
+          Preview <Icon name="right" size={13} />
+        </Button>
+      </div>
+      <div className="coach-floating-body">
+        <Suspense
+          fallback={
+            <p className="muted" role="status">
+              Loading transition cues…
+            </p>
+          }
+        >
+          <TransitionExplorer
+            initialTab={initialTab}
+            value={detailsTab === "why" ? "why" : initialTab}
+            onTabChange={(tab) => {
+              setCoachDetailsTab(tab === "why" ? "why" : "explore")
+              if (tab !== "why") onSectionChange(tab)
+            }}
+            why={why}
+            history={
+              automix.playedIds.length > 0 && (
+                <div className="coach-played-history">
+                  <span>
+                    {automix.playedIds.length} played · skipped by Automix
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={automix.active}
+                    title="Allow played tracks to be selected again"
+                    onClick={resetAutomixHistory}
+                  >
+                    Reset history
+                  </Button>
+                </div>
+              )
+            }
+          />
+        </Suspense>
+      </div>
+    </>
   )
 }

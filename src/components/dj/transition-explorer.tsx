@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react"
+import type { ReactNode } from "react"
 import { Link } from "@tanstack/react-router"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -249,8 +250,16 @@ export function NextTrackSuggestions() {
 
 export function TransitionExplorer({
   initialTab = "recommended",
+  value: activeTab,
+  onTabChange,
+  why,
+  history,
 }: {
   initialTab?: string
+  value?: string
+  onTabChange?: (tab: string) => void
+  why?: ReactNode
+  history?: ReactNode
 }) {
   const {
     database,
@@ -264,8 +273,13 @@ export function TransitionExplorer({
   } = useDJ()
   const { outId, inId, out, incoming, plan, outCue, inCue } =
     useTransitionPlan()
-  const [tab, setTab] = useState(initialTab),
+  const [localTab, setLocalTab] = useState(initialTab),
     [techniqueId, setTechniqueId] = useState<string | null>(null)
+  const tab = activeTab ?? localTab
+  const setTab = (next: string) => {
+    setLocalTab(next)
+    onTabChange?.(next)
+  }
   const [showEarlier, setShowEarlier] = useState(false),
     [count, setCount] = useState(8)
   const [exitFilter, setExitFilter] = useState("all"),
@@ -341,319 +355,358 @@ export function TransitionExplorer({
   }
   return (
     <div className="transition-explorer">
-      <div className="explorer-intent">
-        <span>Energy goal</span>
-        <Select
-          value={database.session.mixIntent}
-          onValueChange={(value) => value && setMixIntent(value)}
-        >
-          <SelectTrigger aria-label="Coach energy goal">
-            <SelectValue>
-              {database.session.mixIntent === "lift"
-                ? "Lift energy"
-                : database.session.mixIntent === "ease"
-                  ? "Ease energy"
-                  : "Maintain groove"}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="maintain">Maintain groove</SelectItem>
-            <SelectItem value="lift">Lift energy</SelectItem>
-            <SelectItem value="ease">Ease energy</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
-        <TabsList className="explorer-tabs">
+      <Tabs
+        className="explorer-workspace"
+        value={tab}
+        onValueChange={(next) => setTab(String(next))}
+      >
+        <TabsList className="explorer-tabs" aria-label="Transition coach views">
           <TabsTrigger value="recommended">
-            Transitions · {choices.length}
+            Transitions{" "}
+            <span className="coach-tab-count">{choices.length}</span>
           </TabsTrigger>
-          <TabsTrigger value="cues">Cue combinations</TabsTrigger>
-          <TabsTrigger value="next">Next in collection</TabsTrigger>
-          <TabsTrigger value="all">All techniques · 28</TabsTrigger>
+          <TabsTrigger value="cues">Cue pairs</TabsTrigger>
+          <TabsTrigger value="next">Next tracks</TabsTrigger>
+          <TabsTrigger value="all">
+            Techniques <span className="coach-tab-count">28</span>
+          </TabsTrigger>
+          {why && <TabsTrigger value="why">Why & steps</TabsTrigger>}
         </TabsList>
-        <TabsContent value="recommended">
-          <div className="explorer-routines">
-            {ranked.map(({ choice, pair }, index) => (
-              <Card
-                key={choice.plan.id}
-                className={`explorer-routine ${plan?.id === choice.plan.id ? "chosen" : ""}`}
-              >
-                <div>
-                  <strong>{choice.plan.name}</strong>
-                  <Badge variant={index < 3 && pair ? "secondary" : "outline"}>
-                    {pair
-                      ? index === 0
-                        ? "Recommended"
-                        : `${pair.score} match`
-                      : "Exit cues passed"}
-                  </Badge>
-                </div>
-                <p>{choice.plan.description}</p>
-                <span className="muted">
-                  Level {choice.plan.difficulty} · {choice.pairs.length}{" "}
-                  suggested combinations · {choice.exits.length} exit /{" "}
-                  {choice.entries.length} entry points
-                </span>
-                {pair && (
-                  <span>
-                    {outId} {formatTime(pair.out.position)} → {inId}{" "}
-                    {formatTime(pair.incoming.position)} ·{" "}
-                    {pair.bars ? `${pair.bars} bars` : "Downbeat cut"}
-                  </span>
-                )}
-                <div className="coach-row-actions">
-                  <Button
-                    variant="outline"
-                    disabled={!pair || out.loading || incoming.loading}
-                    onClick={() => pair && usePair(pair)}
-                  >
-                    Use recommended cues
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setTechniqueId(choice.plan.id)
-                      setTab("cues")
-                      setCount(8)
-                      setExitFilter("all")
-                      setEntryFilter("all")
-                    }}
-                  >
-                    All cue options
-                  </Button>
-                </div>
-              </Card>
-            ))}
-          </div>
-          {!choices.length && (
-            <p className="muted">
-              Load both decks to compare executable transitions. Next in
-              collection works with an outgoing track alone.
-            </p>
+        <div className="explorer-scroll" key={tab}>
+          {tab !== "why" && (
+            <div className="explorer-toolbar">
+              <div className="explorer-intent">
+                <span>Energy goal</span>
+                <Select
+                  value={database.session.mixIntent}
+                  onValueChange={(value) => value && setMixIntent(value)}
+                >
+                  <SelectTrigger aria-label="Coach energy goal">
+                    <SelectValue>
+                      {database.session.mixIntent === "lift"
+                        ? "Lift energy"
+                        : database.session.mixIntent === "ease"
+                          ? "Ease energy"
+                          : "Maintain groove"}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="maintain">Maintain groove</SelectItem>
+                    <SelectItem value="lift">Lift energy</SelectItem>
+                    <SelectItem value="ease">Ease energy</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {history}
+            </div>
           )}
-        </TabsContent>
-        <TabsContent value="cues">
-          <div className="explorer-cue-filters">
-            <Select
-              value={selected?.plan.id ?? ""}
-              onValueChange={(value) => {
-                if (!value) return
-                setTechniqueId(value)
-                setCount(8)
-                setExitFilter("all")
-                setEntryFilter("all")
-              }}
-            >
-              <SelectTrigger aria-label="Cue technique">
-                <SelectValue>
-                  {selected?.plan.name ?? "Choose transition"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {choices.map((choice) => (
-                  <SelectItem key={choice.plan.id} value={choice.plan.id}>
-                    {choice.plan.name} · {choice.pairs.length} combinations
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              variant="outline"
-              aria-pressed={showEarlier}
-              onClick={() => {
-                setShowEarlier(!showEarlier)
-                setCount(8)
-              }}
-            >
-              {showEarlier ? "All track positions" : "Upcoming exits only"}
-            </Button>
-            {(["exit", "entry"] as const).map((role) => (
+          <TabsContent value="recommended">
+            <div className="explorer-routines">
+              {ranked.map(({ choice, pair }, index) => (
+                <Card
+                  key={choice.plan.id}
+                  className={`explorer-routine ${plan?.id === choice.plan.id ? "chosen" : ""}`}
+                >
+                  <div>
+                    <strong>{choice.plan.name}</strong>
+                    <Badge
+                      variant={
+                        plan?.id === choice.plan.id || index === 0
+                          ? "secondary"
+                          : "outline"
+                      }
+                    >
+                      {plan?.id === choice.plan.id
+                        ? "Selected"
+                        : pair
+                          ? index === 0
+                            ? "Recommended"
+                            : `${pair.score} match`
+                          : "Exit cues passed"}
+                    </Badge>
+                  </div>
+                  <p>{choice.plan.description}</p>
+                  <span className="explorer-routine-meta">
+                    <span>Level {choice.plan.difficulty}</span>
+                    <span>{choice.pairs.length} cue pairs</span>
+                    <span>
+                      {choice.plan.beatmatch
+                        ? "Tempo matched"
+                        : "Native tempos"}
+                    </span>
+                  </span>
+                  {pair && (
+                    <div className="explorer-routine-cues">
+                      <span>
+                        <small>{outId} EXIT</small>
+                        <strong>{formatTime(pair.out.position)}</strong>
+                      </span>
+                      <Icon name="right" size={14} />
+                      <span>
+                        <small>{inId} ENTRY</small>
+                        <strong>{formatTime(pair.incoming.position)}</strong>
+                      </span>
+                      <span className="explorer-routine-length">
+                        {pair.bars ? `${pair.bars} bars` : "Cut"}
+                      </span>
+                    </div>
+                  )}
+                  <div className="coach-row-actions">
+                    <Button
+                      variant={index === 0 ? "default" : "outline"}
+                      disabled={!pair || out.loading || incoming.loading}
+                      onClick={() => pair && usePair(pair)}
+                    >
+                      Use cues
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setTechniqueId(choice.plan.id)
+                        setTab("cues")
+                        setCount(8)
+                        setExitFilter("all")
+                        setEntryFilter("all")
+                      }}
+                    >
+                      Compare cues <Icon name="right" size={12} />
+                    </Button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+            {!choices.length && (
+              <p className="muted">
+                Load both decks to compare executable transitions. Next in
+                collection works with an outgoing track alone.
+              </p>
+            )}
+          </TabsContent>
+          <TabsContent value="cues">
+            <div className="explorer-cue-filters">
               <Select
-                key={role}
-                value={role === "exit" ? exitFilter : entryFilter}
+                value={selected?.plan.id ?? ""}
                 onValueChange={(value) => {
-                  if (value) {
-                    ;(role === "exit" ? setExitFilter : setEntryFilter)(value)
-                    setCount(8)
-                  }
+                  if (!value) return
+                  setTechniqueId(value)
+                  setCount(8)
+                  setExitFilter("all")
+                  setEntryFilter("all")
                 }}
               >
-                <SelectTrigger aria-label={`Coach ${role} cue filter`}>
+                <SelectTrigger aria-label="Cue technique">
                   <SelectValue>
-                    {(role === "exit" ? exitFilter : entryFilter) === "all"
-                      ? `All ${role} points`
-                      : formatTime(
-                          +(role === "exit" ? exitFilter : entryFilter)
-                        )}
+                    {selected?.plan.name ?? "Choose transition"}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All {role} points</SelectItem>
-                  {(role === "exit"
-                    ? (selected?.exits ?? [])
-                    : (selected?.entries ?? [])
-                  ).map((cue) => (
-                    <SelectItem key={cue.position} value={String(cue.position)}>
-                      {formatTime(cue.position)} · {cue.label}
+                  {choices.map((choice) => (
+                    <SelectItem key={choice.plan.id} value={choice.plan.id}>
+                      {choice.plan.name} · {choice.pairs.length} combinations
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-            ))}
-          </div>
-          <p className="muted">
-            {pairs.length} cue combinations. Saved cues and estimated phrase
-            anchors are compared across the whole track. Choose a pair to update
-            the deck waveforms; previewing does not seek playback.
-          </p>
-          <div className="explorer-cue-pairs">
-            {pairs.slice(0, count).map((pair) => (
-              <Card
-                key={pair.id}
-                className={`explorer-cue-pair ${outCue === pair.out.position && inCue === pair.incoming.position && plan?.id === pair.technique ? "chosen" : ""}`}
+              <Button
+                variant="outline"
+                aria-pressed={showEarlier}
+                onClick={() => {
+                  setShowEarlier(!showEarlier)
+                  setCount(8)
+                }}
               >
-                <div className="cue-pair-times">
-                  <div>
-                    <strong>
-                      {outId} · {formatTime(pair.out.position)}
-                    </strong>
-                    <span>{pair.out.label}</span>
-                  </div>
-                  <Icon name="right" size={16} />
-                  <div>
-                    <strong>
-                      {inId} · {formatTime(pair.incoming.position)}
-                    </strong>
-                    <span>{pair.incoming.label}</span>
-                  </div>
-                  <Badge variant="outline">{pair.score} match</Badge>
-                </div>
-                <p>
-                  {pair.reasons.join(" · ")} ·{" "}
-                  {pair.bars ? `${pair.bars} bars` : "Downbeat"} ·{" "}
-                  {pair.duration < 1 ? "< 1 sec" : formatTime(pair.duration)}
-                </p>
-                <div className="coach-row-actions">
-                  <Button
-                    variant="outline"
-                    disabled={out.loading || incoming.loading}
-                    onClick={() => usePair(pair)}
-                  >
-                    Use this pair
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    disabled={out.loading || incoming.loading}
-                    onClick={() => usePair(pair, true)}
-                  >
-                    Preview waveforms
-                  </Button>
-                  {pair.out.position < out.position && (
-                    <span className="text-orange">
-                      Exit passed · seek back to practice
-                    </span>
-                  )}
-                </div>
-              </Card>
-            ))}
-          </div>
-          {!pairs.length && (
-            <p className="muted">
-              No future combination matches these filters. Review earlier
-              positions or choose another technique.
-            </p>
-          )}
-          {pairs.length > count && (
-            <Button variant="outline" onClick={() => setCount(count + 12)}>
-              Show more combinations · {pairs.length - count} remaining
-            </Button>
-          )}
-          {plan && (
-            <div className="coach-row-actions">
-              {([outId, inId] as const).map((id) => (
-                <Button
-                  key={id}
-                  variant="ghost"
-                  disabled={!engine || out.loading || incoming.loading}
-                  onClick={() => {
-                    const outgoing = id === outId,
-                      slot = engine?.saveSuggestedCue(
-                        id,
-                        outgoing ? plan.outStart : plan.inStart,
-                        outgoing ? "EXIT" : "ENTRY"
-                      )
-                    notify(
-                      slot != null
-                        ? `Saved ${id} hot cue ${slot + 1}.`
-                        : "All hot cues are occupied. Clear a pad to save another point."
-                    )
+                {showEarlier ? "All track positions" : "Upcoming exits only"}
+              </Button>
+              {(["exit", "entry"] as const).map((role) => (
+                <Select
+                  key={role}
+                  value={role === "exit" ? exitFilter : entryFilter}
+                  onValueChange={(value) => {
+                    if (value) {
+                      ;(role === "exit" ? setExitFilter : setEntryFilter)(value)
+                      setCount(8)
+                    }
                   }}
                 >
-                  Save {id} {id === outId ? "exit" : "entry"} as hot cue
+                  <SelectTrigger aria-label={`Coach ${role} cue filter`}>
+                    <SelectValue>
+                      {(role === "exit" ? exitFilter : entryFilter) === "all"
+                        ? `All ${role} points`
+                        : formatTime(
+                            +(role === "exit" ? exitFilter : entryFilter)
+                          )}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All {role} points</SelectItem>
+                    {(role === "exit"
+                      ? (selected?.exits ?? [])
+                      : (selected?.entries ?? [])
+                    ).map((cue) => (
+                      <SelectItem
+                        key={cue.position}
+                        value={String(cue.position)}
+                      >
+                        {formatTime(cue.position)} · {cue.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ))}
+            </div>
+            <p className="muted">
+              {pairs.length} cue combinations. Saved cues and estimated phrase
+              anchors are compared across the whole track. Choose a pair to
+              update the deck waveforms; previewing does not seek playback.
+            </p>
+            <div className="explorer-cue-pairs">
+              {pairs.slice(0, count).map((pair) => (
+                <Card
+                  key={pair.id}
+                  className={`explorer-cue-pair ${outCue === pair.out.position && inCue === pair.incoming.position && plan?.id === pair.technique ? "chosen" : ""}`}
+                >
+                  <div className="cue-pair-times">
+                    <div>
+                      <strong>
+                        {outId} · {formatTime(pair.out.position)}
+                      </strong>
+                      <span>{pair.out.label}</span>
+                    </div>
+                    <Icon name="right" size={16} />
+                    <div>
+                      <strong>
+                        {inId} · {formatTime(pair.incoming.position)}
+                      </strong>
+                      <span>{pair.incoming.label}</span>
+                    </div>
+                    <Badge variant="outline">{pair.score} match</Badge>
+                  </div>
+                  <p>
+                    {pair.reasons.join(" · ")} ·{" "}
+                    {pair.bars ? `${pair.bars} bars` : "Downbeat"} ·{" "}
+                    {pair.duration < 1 ? "< 1 sec" : formatTime(pair.duration)}
+                  </p>
+                  <div className="coach-row-actions">
+                    <Button
+                      variant="outline"
+                      disabled={out.loading || incoming.loading}
+                      onClick={() => usePair(pair)}
+                    >
+                      Use this pair
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      disabled={out.loading || incoming.loading}
+                      onClick={() => usePair(pair, true)}
+                    >
+                      Preview waveforms
+                    </Button>
+                    {pair.out.position < out.position && (
+                      <span className="text-orange">
+                        Exit passed · seek back to practice
+                      </span>
+                    )}
+                  </div>
+                </Card>
+              ))}
+            </div>
+            {!pairs.length && (
+              <p className="muted">
+                No future combination matches these filters. Review earlier
+                positions or choose another technique.
+              </p>
+            )}
+            {pairs.length > count && (
+              <Button variant="outline" onClick={() => setCount(count + 12)}>
+                Show more combinations · {pairs.length - count} remaining
+              </Button>
+            )}
+            {plan && (
+              <div className="coach-row-actions">
+                {([outId, inId] as const).map((id) => (
+                  <Button
+                    key={id}
+                    variant="ghost"
+                    disabled={!engine || out.loading || incoming.loading}
+                    onClick={() => {
+                      const outgoing = id === outId,
+                        slot = engine?.saveSuggestedCue(
+                          id,
+                          outgoing ? plan.outStart : plan.inStart,
+                          outgoing ? "EXIT" : "ENTRY"
+                        )
+                      notify(
+                        slot != null
+                          ? `Saved ${id} hot cue ${slot + 1}.`
+                          : "All hot cues are occupied. Clear a pad to save another point."
+                      )
+                    }}
+                  >
+                    Save {id} {id === outId ? "exit" : "entry"} as hot cue
+                  </Button>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+          <TabsContent value="next">
+            <NextTrackSuggestions />
+          </TabsContent>
+          <TabsContent value="all">
+            <div className="explorer-catalog">
+              {catalog.map((item) => (
+                <Button
+                  key={item.technique.id}
+                  variant="outline"
+                  className="explorer-technique"
+                  aria-pressed={studyId === item.technique.id}
+                  onClick={() => {
+                    setStudyId(item.technique.id)
+                    if (item.plan) setTransitionTechnique(item.plan.id)
+                  }}
+                >
+                  <strong>{item.technique.name}</strong>
+                  <span>
+                    Level {item.technique.level} · {item.status}
+                  </span>
                 </Button>
               ))}
             </div>
-          )}
-        </TabsContent>
-        <TabsContent value="next">
-          <NextTrackSuggestions />
-        </TabsContent>
-        <TabsContent value="all">
-          <div className="explorer-catalog">
-            {catalog.map((item) => (
-              <Button
-                key={item.technique.id}
-                variant="outline"
-                className="explorer-technique"
-                aria-pressed={studyId === item.technique.id}
-                onClick={() => {
-                  setStudyId(item.technique.id)
-                  if (item.plan) setTransitionTechnique(item.plan.id)
-                }}
-              >
-                <strong>{item.technique.name}</strong>
-                <span>
-                  Level {item.technique.level} · {item.status}
-                </span>
-              </Button>
-            ))}
-          </div>
-          {study && (
-            <Card className="explorer-study">
-              <strong>{study.technique.name}</strong>
-              <p>{study.reason}</p>
-              <p>{study.technique.why}</p>
-              <div>
-                {study.technique.labels.map((label) => (
-                  <Badge key={label} variant="outline">
-                    {label}
-                  </Badge>
-                ))}
-              </div>
-              <ol>
-                {study.technique.steps.map((step) => (
-                  <li key={step}>{step}</li>
-                ))}
-              </ol>
-              <p className="text-orange">{study.technique.avoid}</p>
-              <Button
-                nativeButton={false}
-                variant="outline"
-                render={<Link to="/learn" />}
-              >
-                Learn & play
-              </Button>
-            </Card>
-          )}
-        </TabsContent>
+            {study && (
+              <Card className="explorer-study">
+                <strong>{study.technique.name}</strong>
+                <p>{study.reason}</p>
+                <p>{study.technique.why}</p>
+                <div>
+                  {study.technique.labels.map((label) => (
+                    <Badge key={label} variant="outline">
+                      {label}
+                    </Badge>
+                  ))}
+                </div>
+                <ol>
+                  {study.technique.steps.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ol>
+                <p className="text-orange">{study.technique.avoid}</p>
+                <Button
+                  nativeButton={false}
+                  variant="outline"
+                  render={<Link to="/learn" />}
+                >
+                  Learn & play
+                </Button>
+              </Card>
+            )}
+          </TabsContent>
+          {why && <TabsContent value="why">{why}</TabsContent>}
+          <p className="explorer-estimates">
+            <Icon name="info" size={14} />
+            Scores and grids are estimates. Confirm phrasing by ear; vocals,
+            melodies and drops are not detected.
+          </p>
+        </div>
       </Tabs>
-      <p className="explorer-estimates">
-        <Icon name="info" size={14} />
-        Match scores guide cue choice. Phrase grids, loudness and keys are
-        estimates. Vocal, melody and drop sections are not detected; confirm the
-        arrangement by ear.
-      </p>
     </div>
   )
 }

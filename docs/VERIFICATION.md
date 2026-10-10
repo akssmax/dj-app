@@ -143,3 +143,12 @@ No browser control was used for this review. Exact stereo section totals and ful
 On a generated five-minute stereo 44.1 kHz buffer, 100 section queries measured 806.5 ms before preparation and 7.2 ms afterward (about 113× faster on this machine). The original first full-track/section query measured 241 ms; preparation measured 208 ms including 100 yields. These are terminal microbenchmarks, not browser interaction or audio-device latency measurements. Reproduce with `node scripts/performance-check.mjs`.
 
 Cue controls now select only their track/loading/cue data, Deck annotations stay stable during playback, and the closed Settings dialog has no changing audio subscription values. The provider computes its library scope once per input change and shares it between Automix and the library. Local diagnostic captures in `artifacts/` are excluded from Git because they may contain personal library metadata.
+
+
+## Transition coach panel — October 10, 2026
+
+The coach uses one keyboard-accessible tab row for transitions, cue pairs, next tracks, techniques and Why & steps. A fixed summary shows the current routine, outgoing/incoming tracks and selected cue times, with a waveform-preview action. The larger panel has one content scrollbar, expand/restore controls and viewport-bounded sizing. Narrow panels use single-column cards and horizontally scrollable tabs. Added panel text stays at least 12px; controls follow the 32/40/44px density preference.
+
+Transition cards separate descriptions, difficulty, cue times and cue-selection actions. Why & steps labels each action with its estimated outgoing-deck time; listening cautions and active Automix level information appear separately.
+
+Validation used an isolated source snapshot to keep concurrent Automix-bar edits separate: 171 tests, TypeScript, ESLint, formatting and the Vercel production build pass. The generated handler returns HTTP 200 for `/` and `/learn`, with all referenced assets and demo audio present. No browser control or rendered visual inspection was used for this update.
