@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react"
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -26,7 +26,7 @@ import { MidiInputText } from "./midi-activity"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Link } from "@tanstack/react-router"
-import { techniqueReadiness } from "@/lib/dj/planner"
+import { techniqueReadiness, transitionChoices } from "@/lib/dj/planner"
 import { formatTime } from "@/lib/dj/tracks"
 import { cueOptions } from "@/lib/dj/cue-suggestions"
 
@@ -338,6 +338,8 @@ export function TransitionCoach() {
     scopeLabel,
     database,
     setTransitionTechnique,
+    setMixIntent,
+    tracks,
     coachOpen,
     setCoachOpen,
     midi,
@@ -370,9 +372,20 @@ export function TransitionCoach() {
       window.removeEventListener("scroll", position)
     }
   }, [details])
-  const { outId, inId, out, incoming, plan, plans, outCue, inCue } =
+  const { outId, inId, out, incoming, plan, outCue, inCue } =
     useTransitionPlan()
   const state = useEngine()
+  const preparedTrack = useMemo(
+    () =>
+      automix.nextId
+        ? tracks.find((track) => track.id === automix.nextId)
+        : null,
+    [tracks, automix.nextId]
+  )
+  const playableCount = useMemo(
+    () => scopeTracks.filter((track) => track.available !== false).length,
+    [scopeTracks]
+  )
   if (!coachOpen) return null
   const running = automix.active || state.auto
   const barsUntil = plan
@@ -401,128 +414,92 @@ export function TransitionCoach() {
             : barsUntil > 0
               ? `Prepare ${inId} at ${formatTime(plan.inStart)} · start in ${barsUntil} bars`
               : (currentStep?.label ?? `Start deck ${inId}`)
-  const blocked = !out.track || out.loading || !scopeTracks.length
+  const blocked =
+    !out.track || out.loading || !scopeTracks.length || midi.connected
+  const next = automix.nextId
+    ? preparedTrack
+    : state.auto
+      ? incoming.track
+      : null
+  const nextTitle =
+    next?.title ??
+    (automix.phase === "complete"
+      ? "All available tracks played"
+      : automix.phase === "finishing"
+        ? "Final track is playing"
+        : automix.phase === "selecting"
+          ? "Choosing the next track…"
+          : automix.active
+            ? "Waiting for playback"
+            : "Enable Automix to pick the next track")
   return (
     <Card
       ref={coach}
-      className="compact-coach"
+      className="compact-coach automix-bar"
       role="region"
-      aria-label="Transition coach"
+      aria-label="Automix and transition controls"
     >
-      <div className="compact-coach-bar">
-        <div className="compact-coach-title">
-          <strong className="sr-only">Coach</strong>
-          <Badge variant="outline">
-            {outId} → {inId}
-          </Badge>
-        </div>
-        <Select
-          value={database.session.transitionTechnique ?? "auto"}
-          onValueChange={(value) =>
-            value && setTransitionTechnique(value === "auto" ? null : value)
-          }
-        >
-          <SelectTrigger
-            className="coach-technique-select"
-            aria-label="Coach transition technique"
-            disabled={
-              !plans.length || running || out.loading || incoming.loading
+      <div className="automix-toolbar">
+        <label className="coach-auto-control">
+          <strong>Automix</strong>
+          <Switch
+            checked={running}
+            disabled={!engine || (!running && blocked)}
+            aria-label="Enable coach automix"
+            onCheckedChange={(enabled) => {
+              if (enabled) void startAutomix(outId)
+              else if (automix.active) stopAutomix()
+              else engine?.cancelAuto()
+            }}
+          />
+        </label>
+        <label className="automix-picker">
+          <span>Energy{state.auto ? " · next pick" : ""}</span>
+          <Select
+            value={database.session.mixIntent}
+            onValueChange={(value) => value && setMixIntent(value)}
+          >
+            <SelectTrigger aria-label="Automix energy goal">
+              <SelectValue>
+                {database.session.mixIntent === "lift"
+                  ? "Lift energy"
+                  : database.session.mixIntent === "ease"
+                    ? "Ease energy"
+                    : "Maintain groove"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="maintain">Maintain groove</SelectItem>
+              <SelectItem value="lift">Lift energy</SelectItem>
+              <SelectItem value="ease">Ease energy</SelectItem>
+            </SelectContent>
+          </Select>
+        </label>
+        <label className="automix-picker">
+          <span>Transition{state.auto ? " · next mix" : ""}</span>
+          <Select
+            value={database.session.transitionTechnique ?? "auto"}
+            onValueChange={(value) =>
+              value && setTransitionTechnique(value === "auto" ? null : value)
             }
           >
-            <SelectValue>{plan?.name ?? "Load both decks"}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="auto">
-              Auto pick · {plans[0]?.name ?? "Best fit"}
-            </SelectItem>
-            {plans.map((candidate, index) => (
-              <SelectItem key={candidate.id} value={candidate.id}>
-                {candidate.name} ·{" "}
-                {index === 0 ? "Recommended" : `#${index + 1}`} ·{" "}
-                {candidate.bars ? `${candidate.bars} bars` : "Downbeat"}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button
-          variant="ghost"
-          size="xs"
-          className="coach-cue-trigger"
-          disabled={!plan || running}
-          aria-label="Choose transition cue pair"
-          onClick={() => {
-            setInitialTab("cues")
-            setDetailsTab("explore")
-            setDetails(true)
-          }}
-        >
-          <span>
-            {outId} {formatTime(plan?.outStart ?? 0)}
-          </span>
-          <Icon name="right" size={12} />
-          <span>
-            {inId} {formatTime(plan?.inStart ?? 0)}
-          </span>
-        </Button>
-        <div className="compact-coach-guidance">
-          <span
-            title={
-              state.auto
-                ? `Channel mixing · crossfader 50%. ${state.autoLevels}`
-                : report
-                  ? report.tips[0]
-                  : instruction
-            }
-          >
-            {report
-              ? `${report.title} · ${report.score}/100`
-              : automix.active && !state.auto
-                ? automix.message
-                : state.auto
-                  ? state.autoStatus === "Waiting for the exit zone"
-                    ? `${state.autoStatus} · ${formatTime(Math.max(0, ((state.autoPlan?.outStart ?? plan?.outStart ?? 0) - out.position) / out.rate))}`
-                    : state.autoStatus
-                  : instruction}
-          </span>
-          {state.auto && (
-            <Progress
-              value={state.transition * 100}
-              aria-label="Automix progress"
-            />
-          )}
-        </div>
-        {midi.connected ? (
-          <Badge
-            variant="outline"
-            className="coach-manual-mode"
-            title="MIDI connected · automix disabled. Use the suggested cues and transition coach."
-          >
-            <Icon name="usb" size={14} /> Manual
-          </Badge>
-        ) : (
-          <label
-            className="coach-auto-control"
-            title={
-              running
-                ? "Stop automix and return control to you"
-                : !out.track
-                  ? "Load the outgoing deck to enable automix"
-                  : `Choose the best unplayed tracks from ${scopeLabel} using the selected mix controls`
-            }
-          >
-            <span>Automix</span>
-            <Switch
-              checked={running}
-              disabled={!engine || (!running && blocked)}
-              aria-label="Enable coach automix"
-              onCheckedChange={(enabled) => {
-                if (enabled) void startAutomix(outId)
-                else if (automix.active) stopAutomix()
-                else engine?.cancelAuto()
-              }}
-            />
-          </label>
-        )}
+            <SelectTrigger aria-label="Coach transition technique">
+              <SelectValue>
+                {transitionChoices.find(
+                  (choice) => choice.id === database.session.transitionTechnique
+                )?.name ?? "Auto pick"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto pick · best fit</SelectItem>
+              {transitionChoices.map((candidate) => (
+                <SelectItem key={candidate.id} value={candidate.id}>
+                  {candidate.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
         <div className="compact-coach-actions">
           <Button
             variant="ghost"
@@ -660,6 +637,76 @@ export function TransitionCoach() {
           >
             <Icon name="close" size={16} />
           </Button>
+        </div>
+      </div>
+      <div className="automix-now">
+        <div className="automix-next" aria-live="polite" aria-atomic="true">
+          <span className="automix-eyebrow">
+            {automix.phase === "selecting" ? "PREPARING" : "NEXT UP"}
+            {next ? ` · DECK ${inId}` : ""}
+          </span>
+          <strong title={nextTitle}>{nextTitle}</strong>
+          <span title={next?.artist ?? scopeLabel}>
+            {next
+              ? `${next.artist} · ${next.bpm ? `${next.bpm} BPM · ` : ""}${scopeLabel}`
+              : `${scopeLabel} · ${playableCount} playable`}
+          </span>
+        </div>
+        <div className="automix-current">
+          <span className="automix-eyebrow">
+            {state.auto
+              ? `CURRENT · ${plan?.name ?? "Transition"} · ${outId} → ${inId}`
+              : running
+                ? "AUTOMIX ENABLED"
+                : "TRANSITION PREVIEW"}
+          </span>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="coach-cue-trigger"
+            disabled={!plan || running}
+            aria-label="Choose transition cue pair"
+            onClick={() => {
+              setInitialTab("cues")
+              setDetailsTab("explore")
+              setDetails(true)
+            }}
+          >
+            <span>
+              {outId} {formatTime(plan?.outStart ?? 0)}
+            </span>
+            <Icon name="right" size={12} />
+            <span>
+              {inId} {formatTime(plan?.inStart ?? 0)}
+            </span>
+          </Button>
+          <div className="compact-coach-guidance">
+            <span
+              title={
+                state.auto
+                  ? `Channel mixing · crossfader 50%. ${state.autoLevels}`
+                  : report
+                    ? report.tips[0]
+                    : instruction
+              }
+            >
+              {report
+                ? `${report.title} · ${report.score}/100`
+                : automix.active && !state.auto
+                  ? automix.message
+                  : state.auto
+                    ? state.autoStatus === "Waiting for the exit zone"
+                      ? `${state.autoStatus} · ${formatTime(Math.max(0, ((state.autoPlan?.outStart ?? plan?.outStart ?? 0) - out.position) / out.rate))}`
+                      : state.autoStatus
+                    : instruction}
+            </span>
+            {state.auto && (
+              <Progress
+                value={state.transition * 100}
+                aria-label="Automix progress"
+              />
+            )}
+          </div>
         </div>
       </div>
     </Card>

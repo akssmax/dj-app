@@ -219,6 +219,7 @@ export class DJEngine {
     started: boolean
     preparing: boolean
     duration: number
+    overrides: Record<DeckId, Partial<AutomationChannel>>
     original: Record<DeckId, AutomationChannel>
     levels: ReturnType<typeof matchLoudness>
   }
@@ -1660,7 +1661,12 @@ export class DJEngine {
     key: "volume" | "trim" | "low" | "mid" | "high" | "filter" | "rate",
     value: number
   ) {
-    this.cancelAuto()
+    if (key === "rate" || key === "volume") this.cancelAuto()
+    else {
+      this.releaseAutomationControl(id, key)
+      if (key === "filter" && this.state.controller.smartCFX)
+        this.releaseAutomationControl(id, "fx")
+    }
     const deck = this.state[id],
       ch = this.channels[id]
     if (key === "rate") {
@@ -1714,9 +1720,12 @@ export class DJEngine {
           enabled: Math.abs(value) > 0.01,
           amount: Math.abs(value),
         }
+        if (this.automation) this.automation.overrides[id].fx = { ...deck.fx }
         this.applyFX(id)
       }
     }
+    if (this.automation && key !== "rate" && key !== "volume")
+      Object.assign(this.automation.overrides[id], { [key]: deck[key] })
     if (ch && this.context) {
       // A single knob must not reschedule every EQ, FX and fader parameter.
       if (key === "volume") this.applyMix()
@@ -1789,7 +1798,7 @@ export class DJEngine {
     )
   }
   setFX(id: DeckId, values: Partial<DeckState["fx"]>) {
-    this.cancelAuto()
+    this.releaseAutomationControl(id, "fx")
     this.state[id].fx = { ...this.state[id].fx, ...values }
     this.state[id].fx.amount = Math.max(
       0,
@@ -1799,6 +1808,8 @@ export class DJEngine {
       0.25,
       Math.min(2, this.state[id].fx.beats)
     )
+    if (this.automation)
+      this.automation.overrides[id].fx = { ...this.state[id].fx }
     this.applyFX(id)
     this.publish()
   }
@@ -2391,6 +2402,7 @@ export class DJEngine {
       started: false,
       preparing: false,
       original,
+      overrides: { A: {}, B: {} },
       levels,
     })
     this.state.auto = true
@@ -2411,7 +2423,7 @@ export class DJEngine {
     progress: number
   ) {
     const outgoing = id === auto.out
-    return automationControls(
+    const controls = automationControls(
       auto.plan,
       progress,
       auto.original[id],
@@ -2419,6 +2431,39 @@ export class DJEngine {
       outgoing ? auto.levels.outVolume : auto.levels.inVolume,
       outgoing ? auto.levels.outTrim : auto.levels.inTrim
     )
+    // Existing manual FX and knobs touched during this transition belong to
+    // the person. Automation continues to own the untouched controls.
+    if (auto.original[id].fx.enabled) controls.fx = auto.original[id].fx
+    return { ...controls, ...auto.overrides[id] }
+  }
+  private releaseAutomationControl(id: DeckId, key: keyof AutomationChannel) {
+    const auto = this.automation,
+      ch = this.channels[id],
+      ctx = this.context
+    if (!auto || !ch || !ctx) return
+    const controls = this.controlsAt(
+      auto,
+      id,
+      auto.started
+        ? Math.max(
+            0,
+            Math.min(1, (ctx.currentTime - auto.start) / auto.duration)
+          )
+        : 0
+    )
+    Object.assign(this.state[id], controls)
+    const params =
+      key === "fx"
+        ? [ch.echoSend.gain, ch.reverbSend.gain, ch.delay.delayTime]
+        : key === "filter"
+          ? [ch.filter.frequency]
+          : key === "trim"
+            ? [ch.trim.gain]
+            : key === "low" || key === "mid" || key === "high"
+              ? [ch[key].gain]
+              : []
+    for (const param of params) param.cancelScheduledValues(ctx.currentTime)
+    Object.assign(auto.overrides[id], { [key]: controls[key] })
   }
   private restoreAutomation(
     auto: NonNullable<typeof this.automation>,
@@ -2472,6 +2517,7 @@ export class DJEngine {
           rate: cancelled ? saved.rate : deck.rate,
         })
       }
+      Object.assign(deck, auto.overrides[id])
       if (cancelled && auto.started) {
         const time = this.context!.currentTime
         ch.gain.gain.setValueAtTime(deck.volume, time)
@@ -2622,9 +2668,11 @@ export class DJEngine {
       ch.trim.gain.cancelScheduledValues(ctx.currentTime)
       ch.trim.gain.setValueAtTime(10 ** (controls(0).trim / 20), start)
       for (const band of ["low", "mid", "high"] as const)
-        schedule(ch[band].gain, (p) => controls(p)[band])
+        if (!(band in auto.overrides[id]))
+          schedule(ch[band].gain, (p) => controls(p)[band])
       if (
         outgoing &&
+        !("filter" in auto.overrides[id]) &&
         ["filter", "echo", "reverb"].includes(auto.plan.execution)
       ) {
         ch.filter.type = "highpass"
@@ -2636,13 +2684,17 @@ export class DJEngine {
         ["reverb", ch.reverbSend.gain],
       ] as const)
         schedule(param, (p) =>
-          outgoing && auto.plan.execution === type
-            ? automationFrame(auto.plan, p).fxSend * 0.65
+          controls(p).fx.enabled && controls(p).fx.type === type
+            ? controls(p).fx.amount * 0.65
             : 0
         )
       ch.delay.delayTime.cancelScheduledValues(ctx.currentTime)
       ch.delay.delayTime.setValueAtTime(
-        echoDelay(this.state[id].track?.bpm ?? null, this.state[id].rate, 1),
+        echoDelay(
+          this.state[id].track?.bpm ?? null,
+          this.state[id].rate,
+          controls(0).fx.beats
+        ),
         start
       )
     }

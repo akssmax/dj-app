@@ -1809,11 +1809,12 @@ describe("audio transport and automix lock", () => {
     expect(engine.state.B.playing).toBe(false)
     ContextMock.latest.sources.at(-1)!.onended!()
     expect(mix.state.phase).toBe("complete")
-    expect(mix.state.active).toBe(false)
+    expect(mix.state.active).toBe(true)
     const count = ContextMock.latest.sources.length
     await mix.start("A")
     expect(ContextMock.latest.sources).toHaveLength(count)
-    expect(mix.state.active).toBe(false)
+    expect(mix.state.active).toBe(true)
+    mix.stop()
     mix.resetHistory()
     expect(mix.state.playedIds).toEqual([])
     expect(engine.state.A.position).toBe(0)
@@ -1839,7 +1840,7 @@ describe("audio transport and automix lock", () => {
     expect(new Set(mix.state.playedIds).size).toBe(3)
     mix.dispose()
   })
-  it("does not revive automation after a manual adjustment during track decoding", async () => {
+  it("keeps Automix enabled after a manual adjustment during decoding, without starting a paused deck", async () => {
     await engine.load("A", analyzed)
     let release: () => void = () => {}
     vi.stubGlobal(
@@ -1856,10 +1857,92 @@ describe("audio transport and automix lock", () => {
     engine.setCrossfade(0.3)
     release()
     await starting
-    expect(mix.state.active).toBe(false)
+    expect(mix.state.active).toBe(true)
+    expect(mix.state.phase).toBe("waiting")
     expect(engine.state.auto).toBe(false)
     expect(engine.state.A.playing).toBe(false)
     expect(engine.state.crossfade).toBe(0.3)
+    mix.dispose()
+  })
+  it("keeps manual FX, EQ and filter settings through automation ticks and the handoff", async () => {
+    await engine.load("A", analyzed)
+    await engine.load("B", incoming)
+    const { mix, options } = continuousMix([analyzed, incoming])
+    options.session.transitionTechnique = "echo"
+    options.session.transitionCues[analyzed.id].exit = 3
+    await mix.start("A")
+    engine.setFX("B", {
+      type: "reverb",
+      enabled: true,
+      amount: 0.6,
+      beats: 0.5,
+    })
+    engine.setParam("B", "high", -3)
+    engine.setParam("B", "filter", -0.2)
+    await vi.advanceTimersByTimeAsync(3100)
+    expect(mix.state.active).toBe(true)
+    expect(engine.state.auto).toBe(true)
+    engine.setFX("A", { type: "echo", enabled: true, amount: 0.4 })
+    engine.setParam("A", "mid", -5)
+    await vi.advanceTimersByTimeAsync(300)
+    expect(engine.state.A.mid).toBe(-5)
+    expect(engine.state.A.fx.amount).toBe(0.4)
+    expect(engine.state.B.fx).toEqual({
+      type: "reverb",
+      enabled: true,
+      amount: 0.6,
+      beats: 0.5,
+    })
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(mix.state.active).toBe(true)
+    expect(engine.state.B.playing).toBe(true)
+    expect(engine.state.B.high).toBe(-3)
+    expect(engine.state.B.filter).toBe(-0.2)
+    expect(engine.state.B.fx.enabled).toBe(true)
+    expect(engine.state.B.fx.amount).toBe(0.6)
+    mix.stop()
+    expect(mix.state.active).toBe(false)
+    mix.dispose()
+  })
+  it("waits through a manual pause and resumes Automix when playback resumes", async () => {
+    await engine.load("A", analyzed)
+    const { mix } = continuousMix([analyzed, incoming])
+    await mix.start("A")
+    engine.pause("A")
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mix.state.active).toBe(true)
+    expect(mix.state.phase).toBe("waiting")
+    expect(engine.state.auto).toBe(false)
+    expect(engine.state.A.playing).toBe(false)
+    await engine.play("A")
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mix.state.active).toBe(true)
+    expect(engine.state.auto).toBe(true)
+    mix.stop()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mix.state.active).toBe(false)
+    expect(engine.state.auto).toBe(false)
+    mix.dispose()
+  })
+  it("does not revive an explicitly stopped run after track decoding", async () => {
+    await engine.load("A", analyzed)
+    let release: () => void = () => {}
+    vi.stubGlobal(
+      "fetch",
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(1) })
+        })
+    )
+    const { mix } = continuousMix([analyzed, incoming])
+    const starting = mix.start("A")
+    mix.stop()
+    release()
+    await starting
+    expect(mix.state.active).toBe(false)
+    expect(engine.state.auto).toBe(false)
+    expect(engine.state.A.playing).toBe(false)
     mix.dispose()
   })
   it("cancels the outgoing pending audio start when Automix is stopped during resume", async () => {
@@ -1907,7 +1990,7 @@ describe("audio transport and automix lock", () => {
     expect(mix.state.playedIds).not.toContain(incoming.id)
     mix.dispose()
   })
-  it("pauses with an explanation when the chosen routine has no eligible unplayed pair", async () => {
+  it("waits with Automix enabled when the chosen routine has no eligible unplayed pair", async () => {
     await engine.load("A", analyzed)
     const { mix, options, notice } = continuousMix([
       analyzed,
@@ -1915,23 +1998,40 @@ describe("audio transport and automix lock", () => {
     ])
     options.session.transitionTechnique = "bass"
     await mix.start("A")
-    expect(mix.state.active).toBe(false)
-    expect(mix.state.phase).toBe("paused")
+    expect(mix.state.active).toBe(true)
+    expect(mix.state.phase).toBe("waiting")
     expect(notice).toHaveBeenCalledWith(
       expect.stringContaining("selected technique")
     )
     expect(engine.state.A.playing).toBe(false)
     mix.dispose()
   })
-  it("finishes a one-track collection and rejects controller takeover during preparation", async () => {
+  it("waits when the final track is manually paused instead of reporting completion", async () => {
+    await engine.load("A", analyzed)
+    const { mix } = continuousMix([analyzed])
+    await mix.start("A")
+    await vi.advanceTimersByTimeAsync(200)
+    engine.pause("A")
+    expect(mix.state.active).toBe(true)
+    expect(mix.state.phase).toBe("waiting")
+    await engine.play("A")
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mix.state.phase).toBe("finishing")
+    expect(mix.state.active).toBe(true)
+    mix.dispose()
+  })
+  it("keeps the enabled preference while a controller prevents automation", async () => {
     await engine.load("A", analyzed)
     const { mix } = continuousMix([analyzed])
     await mix.start("A")
     expect(mix.state.phase).toBe("finishing")
     expect(mix.state.playedIds).toEqual([analyzed.id])
     engine.setHardwareConnected(true)
-    expect(mix.state.active).toBe(false)
+    expect(mix.state.active).toBe(true)
     await mix.start("A")
+    expect(mix.state.active).toBe(true)
+    expect(engine.state.auto).toBe(false)
+    mix.stop()
     expect(mix.state.active).toBe(false)
     mix.dispose()
   })
@@ -2146,7 +2246,7 @@ describe("audio transport and automix lock", () => {
     expect(engine.state.A.loop).toBeNull()
     expect(engine.state.B.playing).toBe(true)
   })
-  it("cancels scheduled launches and effects when a person adjusts EQ", async () => {
+  it("keeps scheduled launches and effects running when a person adjusts EQ", async () => {
     await engine.load("A", analyzed)
     await engine.load("B", incoming)
     await engine.startAuto(
@@ -2160,11 +2260,10 @@ describe("audio transport and automix lock", () => {
     await vi.advanceTimersByTimeAsync(150)
     const scheduled = ContextMock.latest.sources.at(-1)!
     engine.setParam("A", "mid", -5)
-    expect(engine.state.auto).toBe(false)
-    expect(engine.state.A.fx.enabled).toBe(false)
-    expect(scheduled.stop).toHaveBeenCalled()
+    expect(engine.state.auto).toBe(true)
+    expect(scheduled.stop).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(5000)
-    expect(engine.state.B.playing).toBe(false)
+    expect(engine.state.B.playing).toBe(true)
     expect(engine.state.A.mid).toBe(-5)
   })
   it("compensates scheduled start lead time to keep both audible beat phases aligned", async () => {

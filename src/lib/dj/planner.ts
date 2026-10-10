@@ -68,6 +68,14 @@ const definitions: {
   { id: "fade", lesson: "fade", execution: "fade", bars: 2, needsTempo: false },
   { id: "cut", lesson: "cut", execution: "cut", bars: 0, needsTempo: false },
 ]
+export const transitionChoices = definitions.map((recipe) => ({
+  id: recipe.id,
+  name:
+    recipe.id === "blend"
+      ? "Phrase blend"
+      : techniques.find((t) => t.id === recipe.lesson)!.name,
+}))
+
 export function transitionSteps(
   execution: Transition["execution"],
   swapAt = execution === "long" ? 0.75 : 0.5

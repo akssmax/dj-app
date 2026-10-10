@@ -6,7 +6,14 @@ import type { DeckId, Track } from "./types"
 
 export type AutomixState = {
   active: boolean
-  phase: "idle" | "selecting" | "mixing" | "finishing" | "paused" | "complete"
+  phase:
+    | "idle"
+    | "selecting"
+    | "mixing"
+    | "finishing"
+    | "paused"
+    | "waiting"
+    | "complete"
   playedIds: string[]
   nextId: string | null
   message: string
@@ -36,6 +43,8 @@ export class AutomixSession {
   private internalDepth = 0
   private finalDeck: DeckId | null = null
   private pendingPlay: DeckId | null = null
+  private resumeRequested = false
+  private resumeQueued = false
   private unsubscribe: () => void
 
   constructor(
@@ -89,25 +98,74 @@ export class AutomixSession {
       this.finalDeck &&
       !this.engine.state[this.finalDeck].playing
     ) {
+      const deck = this.engine.state[this.finalDeck]
+      const ended = !!deck.track && deck.position >= deck.track.duration - 0.08
       this.generation++
       this.finalDeck = null
+      this.resumeRequested = !ended
       this.emit({
-        active: false,
-        phase: "complete",
+        phase: ended ? "complete" : "waiting",
         nextId: null,
-        message: "Mix complete · all available tracks played",
+        message: ended
+          ? "Mix complete · all available tracks played"
+          : "Automix enabled · resume the final track to continue",
       })
-      this.notify(this.state.message)
+      if (ended) this.notify(this.state.message)
     }
+    this.queueResume()
   }
 
   private cancelled = () => {
     if (this.internalDepth || !this.state.active) return
-    this.stop()
+    if (this.resumeRequested && this.state.phase === "waiting") return
+    this.generation++
+    this.finalDeck = null
+    this.resumeRequested = true
+    this.emit({
+      phase: "waiting",
+      nextId: null,
+      message: "Automix enabled · resume a deck to continue",
+    })
+    this.queueResume()
+  }
+
+  // Defer until the manual action has finished. Never restart a paused deck,
+  // revive a stopped run, or retry a failed selection on every engine tick.
+  private queueResume() {
+    if (!this.state.active || !this.resumeRequested || this.resumeQueued) return
+    this.resumeQueued = true
+    queueMicrotask(() => {
+      this.resumeQueued = false
+      if (
+        !this.state.active ||
+        !this.resumeRequested ||
+        this.engine.hardwareLocked
+      )
+        return
+      const out = outgoingDeck(this.engine.state),
+        deck = this.engine.state[out]
+      if (
+        !deck.playing ||
+        deck.loading ||
+        !deck.track ||
+        this.engine.state.error ||
+        deck.position >= deck.track.duration - 0.08
+      )
+        return
+      this.resumeRequested = false
+      void this.prepare(out, this.generation)
+    })
+  }
+
+  refresh() {
+    if (!this.state.active || this.state.phase !== "waiting") return
+    this.resumeRequested = true
+    this.queueResume()
   }
 
   stop(message = "Automix paused · played tracks stay excluded") {
     this.generation++
+    this.resumeRequested = false
     this.emit({ active: false, phase: "paused", nextId: null, message })
     this.finalDeck = null
     this.own(() => {
@@ -142,6 +200,7 @@ export class AutomixSession {
       return
     }
     if (this.state.active) return
+    this.resumeRequested = false
     this.unavailable.clear()
     this.observe()
     const source = this.engine.state[out]
@@ -157,6 +216,7 @@ export class AutomixSession {
       )
     ) {
       this.emit({
+        active: true,
         phase: "complete",
         message: "Mix complete · all available tracks played",
       })
@@ -323,7 +383,12 @@ export class AutomixSession {
   }
 
   private fail(message: string) {
-    this.stop(message)
+    this.generation++
+    this.resumeRequested = false
+    this.finalDeck = null
+    this.own(() => this.engine.cancelAuto())
+    this.pendingPlay = null
+    this.emit({ phase: "waiting", nextId: null, message })
     this.notify(message)
   }
 

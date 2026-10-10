@@ -1093,8 +1093,8 @@ export function DJProvider({ children }: { children: ReactNode }) {
     setLayout: (layout) =>
       update((db) => ({ ...db, session: { ...db.session, layout } })),
     setMixIntent: (mixIntent) => {
-      engineRef.current?.cancelAuto()
       update((db) => ({ ...db, session: { ...db.session, mixIntent } }))
+      automixRef.current?.refresh()
     },
     setTransitionCue: (trackId, role, position) => {
       engineRef.current?.cancelAuto()
@@ -1116,11 +1116,11 @@ export function DJProvider({ children }: { children: ReactNode }) {
       }))
     },
     setTransitionTechnique: (transitionTechnique) => {
-      engineRef.current?.cancelAuto()
       update((db) => ({
         ...db,
         session: { ...db.session, transitionTechnique },
       }))
+      automixRef.current?.refresh()
     },
     transitionPreview,
     setTransitionPreview,
@@ -1214,7 +1214,7 @@ export function useEngine<TValue = EngineState>(
 
 export function useTransitionPlan() {
   const state = useEngine((current) => ({
-      outId: outgoingDeck(current),
+      outId: current.autoOut ?? outgoingDeck(current),
       autoPlan: current.autoPlan,
       aTrack: current.A.track,
       aCues: current.A.cues,
