@@ -18,6 +18,19 @@ pnpm test
 pnpm build
 ```
 
+## Vercel deployment
+
+This is a TanStack Start app with server rendering. `vercel.json` selects the **TanStack Start** framework and the Nitro Vite plugin generates Vercel's server function and static assets. Import this repository with root directory `.` and leave build/output overrides unset. A static Vite deployment of `dist` cannot serve the app's routes and produces a platform 404 at `/`.
+
+To verify the Vercel output locally without a browser:
+
+```sh
+NITRO_PRESET=vercel pnpm build
+node scripts/verify-vercel-build.mjs
+```
+
+The check verifies `/`, `/learn`, referenced client assets, bundled audio and the application’s unknown-route response. Generated `.vercel` and `.output` directories stay out of Git and source lint/format checks.
+
 ## Working features
 
 - Two audio decks: play, pause, seek, tempo, tempo/phase sync, eight hot cues, quantized cues/loops/beat jumps, and slip-mode loops/roll pads.
