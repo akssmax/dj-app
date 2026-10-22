@@ -79,6 +79,8 @@ export type DJContextValue = {
   setTheme: (value: ThemeId) => void
   density: LibraryDatabase["session"]["density"]
   setDensity: (value: LibraryDatabase["session"]["density"]) => void
+  waveStyle: LibraryDatabase["session"]["waveStyle"]
+  setWaveStyle: (value: LibraryDatabase["session"]["waveStyle"]) => void
   layout: StudioLayout
   setLayout: (value: StudioLayout) => void
   setMixIntent: (value: MixIntent) => void

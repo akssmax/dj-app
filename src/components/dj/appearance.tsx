@@ -28,7 +28,7 @@ export function ThemeSelect() {
 }
 
 export function AppearanceSettings() {
-  const { theme, setTheme } = useDJ()
+  const { theme, setTheme, waveStyle, setWaveStyle } = useDJ()
   return (
     <div className="settings-content">
       <div className="appearance-density">
@@ -37,6 +37,30 @@ export function AppearanceSettings() {
         <p className="muted">
           Dense and Compact tighten spacing and controls. Text stays at least
           12px in all sizes.
+        </p>
+      </div>
+      <div className="appearance-density">
+        <strong>Waveform colors</strong>
+        <Select
+          value={waveStyle}
+          onValueChange={(value) => value && setWaveStyle(value)}
+        >
+          <SelectTrigger aria-label="Waveform colors">
+            <SelectValue>
+              {waveStyle === "bands" ? "3-band layers" : "Spectrum"}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent className="min-w-64">
+            <SelectItem value="spectrum">
+              Spectrum · color by frequency
+            </SelectItem>
+            <SelectItem value="bands">3-band layers · theme colors</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="muted">
+          Spectrum tints each slice by its sound, like Traktor and Serato: bass
+          red, mids green, highs blue. 3-band stacks low, mid and high in the
+          theme&apos;s colors, like Rekordbox.
         </p>
       </div>
       <p>

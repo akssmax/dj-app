@@ -3246,11 +3246,6 @@ a,
     gap: 14px;
     margin-bottom: 21px;
   }
-  .session-actions {
-    width: 100%;
-    justify-content: flex-end;
-    margin-top: -42px;
-  }
   .session-actions button {
     font-size: 0.75rem;
   }

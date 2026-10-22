@@ -1,91 +1,122 @@
-/** A continuous tape reader. Motion uses the newest hardware position; audio
- * runs on the render thread and never allocates a grain for a jog packet. */
+/**
+ * A continuous tape reader that behaves like a record under the hand.
+ *
+ * Jog packets only move a target position. Each audio frame the tape chases
+ * that target with a critically damped follower (no overshoot), so speed
+ * changes glide instead of stepping per packet, and a still hand slows the
+ * record to silence naturally. Reads use 4-point Hermite interpolation with a
+ * speed-scaled low-pass so fast scratches do not alias into hiss.
+ */
+const FOLLOW = 0.008 // seconds for the tape to settle on the hand position
+const STILL = 0.08 // seconds without packets before the hand counts as still
+
 export class ScratchTape {
   private channels: Float32Array[] = []
   private sourceRate = 44100
   private position = 0
-  private speed = 0
   private target = 0
-  private remaining = 0
+  private velocity = 0
   private gain = 0
-  private previousTime: number | null = null
-  private deadline = 0
+  private filtered: number[] = []
+  private lastMove = -Infinity
   private active = false
-  constructor(private outputRate: number) {}
+  private readonly pull: number
+  private readonly damping: number
+  private readonly fade: number
+  constructor(private outputRate: number) {
+    // Critically damped: velocity smoothing is 4× the position gain.
+    this.pull = 1 / (FOLLOW * outputRate)
+    this.damping = Math.min(1, 4 * this.pull)
+    this.fade = Math.min(1, 1 / (outputRate * 0.0015))
+  }
+  /** Current read position in seconds (for tests and diagnostics). */
+  get seconds() {
+    return this.position / this.sourceRate
+  }
   setBuffer(channels: Float32Array[], rate: number) {
     this.channels = channels
     this.sourceRate = rate
     this.stop()
+    this.gain = 0
     this.position = 0
   }
   move(position: number, delta: number, time: number) {
     if (!Number.isFinite(position + delta + time) || !delta) return
-    const start = Math.max(0, position - delta) * this.sourceRate
+    const length = this.channels[0]?.length ?? 0
+    const target = Math.max(0, Math.min(length - 1, position * this.sourceRate))
+    // A new touch, or a jump (cue, seek), restarts from where the hand began.
     if (
       !this.active ||
-      Math.abs(this.position - start) > this.sourceRate * 0.05
-    )
-      this.position = start
-    const elapsed =
-      this.previousTime === null
-        ? 0.025
-        : Math.max(0.004, Math.min(0.025, time - this.previousTime))
-    const length = this.channels[0]?.length ?? 0
-    this.target = Math.max(0, Math.min(length - 1, position * this.sourceRate))
-    // Reach the hardware target over one packet interval. Never run the tape
-    // past that point while waiting for another MIDI message.
-    this.remaining = Math.max(
-      1,
-      Math.round(elapsed * this.outputRate),
-      Math.ceil(
-        Math.abs(this.target - this.position) /
-          ((8 * this.sourceRate) / this.outputRate)
+      Math.abs(this.target - target) > this.sourceRate * 0.25
+    ) {
+      this.position = Math.max(
+        0,
+        Math.min(length - 1, (position - delta) * this.sourceRate)
       )
-    )
-    this.speed = (this.target - this.position) / this.remaining
-    this.previousTime = time
-    this.deadline =
-      time + Math.min(0.05, this.remaining / this.outputRate + 0.004)
+      this.velocity = 0
+    }
+    this.target = target
+    this.lastMove = time
     this.active = true
   }
   stop() {
     this.active = false
-    this.previousTime = null
-    this.remaining = 0
-    this.speed = 0
+    this.velocity = 0
+  }
+  private read(input: Float32Array, at: number) {
+    const i = Math.floor(at),
+      t = at - i,
+      last = input.length - 1
+    const p0 = input[Math.max(0, i - 1)],
+      p1 = input[Math.min(last, i)],
+      p2 = input[Math.min(last, i + 1)],
+      p3 = input[Math.min(last, i + 2)]
+    const c1 = 0.5 * (p2 - p0),
+      c2 = p0 - 2.5 * p1 + 2 * p2 - 0.5 * p3,
+      c3 = 0.5 * (p3 - p0) + 1.5 * (p1 - p2)
+    return ((c3 * t + c2) * t + c1) * t + p1
   }
   render(outputs: Float32Array[], time: number) {
     for (const output of outputs) output.fill(0)
     if (!this.channels.length || !outputs.length) return
     const frames = outputs[0].length,
-      length = this.channels[0].length
+      length = this.channels[0].length,
+      nominal = this.sourceRate / this.outputRate,
+      limit = nominal * 8
     for (let frame = 0; frame < frames; frame++) {
-      const audible =
-        this.active &&
-        this.remaining > 0 &&
-        time + frame / this.outputRate < this.deadline
-      // A short audio ramp prevents clicks. UI and seek positions are direct.
-      this.gain +=
-        ((audible ? 1 : 0) - this.gain) *
-        Math.min(1, 1 / (this.outputRate * 0.002))
-      if (this.gain < 0.0001) continue
-      const index = Math.floor(this.position),
-        fraction = this.position - index
-      if (index >= 0 && index + 1 < length) {
-        for (let channel = 0; channel < outputs.length; channel++) {
-          const input =
-            this.channels[Math.min(channel, this.channels.length - 1)]
-          outputs[channel][frame] =
-            (input[index] + (input[index + 1] - input[index]) * fraction) *
-            this.gain
-        }
-      }
-      if (audible) {
-        this.position = Math.max(
-          0,
-          Math.min(length - 1, this.position + this.speed)
+      if (this.active) {
+        const desired = Math.max(
+          -limit,
+          Math.min(limit, (this.target - this.position) * this.pull)
         )
-        if (--this.remaining === 0) this.position = this.target
+        this.velocity += (desired - this.velocity) * this.damping
+        const next = this.position + this.velocity
+        // Never run past the hand: clamp at the target instead of overshooting.
+        this.position =
+          (this.velocity > 0 && next > this.target) ||
+          (this.velocity < 0 && next < this.target)
+            ? this.target
+            : Math.max(0, Math.min(length - 1, next))
+      }
+      const speed = Math.abs(this.velocity) / nominal
+      const still = time + frame / this.outputRate - this.lastMove > STILL
+      // Quiet below ~3% speed like a stalled record; fade, never gate.
+      const level = this.active ? Math.min(1, speed / 0.12) : 0
+      this.gain += ((still ? 0 : level) - this.gain) * this.fade
+      if (this.gain < 0.0001) {
+        this.gain = 0
+        continue
+      }
+      // One-pole low-pass that closes as speed rises above normal play.
+      const cutoff = 18000 / Math.max(1, speed),
+        alpha = 1 - Math.exp((-2 * Math.PI * cutoff) / this.outputRate)
+      for (let channel = 0; channel < outputs.length; channel++) {
+        const input = this.channels[Math.min(channel, this.channels.length - 1)]
+        const sample = this.read(input, this.position)
+        const previous = this.filtered[channel] ?? sample
+        const smoothed = previous + (sample - previous) * alpha
+        this.filtered[channel] = smoothed
+        outputs[channel][frame] = smoothed * this.gain
       }
     }
   }

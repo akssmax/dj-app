@@ -37,6 +37,12 @@ const analyzed: Track = {
   ...demoTracks[0],
   analysis: {
     peaks: [0.2, 0.4],
+    bands: {
+      rms: [0.1, 0.2],
+      low: [0.1, 0.2],
+      mid: [0.1, 0.2],
+      high: [0.1, 0.2],
+    },
     energyCurve: [],
     bpm: 128,
     beatOffset: 0,
@@ -785,7 +791,7 @@ describe("audio transport and automix lock", () => {
     engine.handleControllerAction({ type: "jogTouch", deck: "A", value: 1 })
     engine.handleControllerAction({ type: "jogTouch", deck: "A", value: 1 })
     engine.jog("A", -1)
-    expect(engine.state.A.position).toBeCloseTo(39.975)
+    expect(engine.state.A.position).toBeCloseTo(40 - 1.8 / 720, 5)
     engine.handleControllerAction({ type: "jogTouch", deck: "A", value: 0 })
     await Promise.resolve()
     expect(engine.state.A.playing).toBe(true)
@@ -1631,6 +1637,28 @@ describe("audio transport and automix lock", () => {
     expect(engine.state.B.track?.grid).toBeUndefined()
     expect(engine.state.B.track?.bpm).toBeNull()
     expect(AnalysisWorkerMock.instances).toHaveLength(2)
+  })
+  it("backfills 3-band waveform data in a worker for older analyses", async () => {
+    const older = { ...analyzed.analysis! }
+    delete older.bands
+    await engine.load("A", { ...analyzed, analysis: older })
+    const worker = AnalysisWorkerMock.instances.at(-1)!
+    expect(worker.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ waveformOnly: true }),
+      expect.anything()
+    )
+    const bands = {
+      rms: [0.3, 0.4],
+      low: [0.3, 0.4],
+      mid: [0.3, 0.4],
+      high: [0.3, 0.4],
+    }
+    worker.onmessage!({
+      data: { ...older, peaks: [0.3, 0.5], bands },
+    })
+    expect(engine.state.A.track?.analysis?.bands).toEqual(bands)
+    expect(engine.state.A.track?.analysis?.bpm).toBe(128)
+    expect(worker.terminate).toHaveBeenCalled()
   })
   it("keeps an old file worker from updating a new version on the other deck", async () => {
     let audio = new File(["audio"], "song.mp3", { lastModified: 1 })

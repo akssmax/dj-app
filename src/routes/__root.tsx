@@ -4,6 +4,7 @@ import { AppShell } from "@/components/dj/shell"
 
 import appCss from "../styles.css?url"
 import themeCss from "../themes.css?url"
+import studioCss from "../studio.css?url"
 
 export const Route = createRootRoute({
   head: () => ({
@@ -25,6 +26,7 @@ export const Route = createRootRoute({
         href: appCss,
       },
       { rel: "stylesheet", href: themeCss },
+      { rel: "stylesheet", href: studioCss },
     ],
   }),
   notFoundComponent: () => (
@@ -38,7 +40,7 @@ export const Route = createRootRoute({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark" data-theme="graphite">
+    <html lang="en" className="dark" data-theme="studio">
       <head>
         <HeadContent />
       </head>

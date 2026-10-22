@@ -39,6 +39,7 @@ export type LibraryDatabase = {
     >
     libraryTab: string
     density: "dense" | "compact" | "comfortable"
+    waveStyle: "spectrum" | "bands"
   }
 }
 export const defaultDatabase: LibraryDatabase = {
@@ -59,7 +60,7 @@ export const defaultDatabase: LibraryDatabase = {
     master: 0.7,
     direction: "ltr",
     sidebarCollapsed: false,
-    theme: "graphite",
+    theme: "studio",
     layout: "parallel",
     quantize: { A: false, B: false },
     mixIntent: "maintain",
@@ -68,6 +69,7 @@ export const defaultDatabase: LibraryDatabase = {
     transitionCues: {},
     libraryTab: "all",
     density: "compact",
+    waveStyle: "spectrum",
   },
 }
 let store: ReturnType<typeof createStore> | undefined

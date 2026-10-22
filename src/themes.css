@@ -16,6 +16,132 @@ html[data-theme] {
   --ring: var(--primary);
   --lime: var(--primary);
   --muted: var(--secondary);
+  --screen: color-mix(in srgb, var(--background) 72%, #000);
+  --tile: color-mix(in srgb, var(--secondary) 80%, var(--card));
+  --signal-cue: var(--orange);
+  --signal-play: var(--primary);
+  --wave-low: color-mix(in srgb, var(--primary) 85%, #2c4bff);
+  --wave-mid: color-mix(in srgb, var(--primary) 40%, #3ddc84);
+  --wave-high: color-mix(in srgb, var(--foreground) 85%, transparent);
+  --wave-bg: color-mix(in srgb, var(--shadow) 35%, transparent);
+  --hot-1: #f08a5d;
+  --hot-2: #e9c46a;
+  --hot-3: #8fbf6a;
+  --hot-4: #5ec2c8;
+  --hot-5: #6f9ef0;
+  --hot-6: #a689f0;
+  --hot-7: #e47fb4;
+  --hot-8: #e46f6f;
+}
+html[data-theme="studio"] {
+  --background: #131315;
+  --foreground: #f2f2f3;
+  --card: #1c1c1f;
+  --popover: #232327;
+  --sidebar: #161618;
+  --primary: #5cc8f5;
+  --primary-foreground: #06212d;
+  --orange: #f4e04d;
+  --secondary: #26262a;
+  --accent: #1f3540;
+  --muted-foreground: #9a9aa2;
+  --border: #2c2c31;
+  --destructive: #ff7a6b;
+  --screen: #0c0c0e;
+  --tile: #27272b;
+  --signal-cue: #ff7d4a;
+  --signal-play: #3ddc84;
+  --wave-low: #3d6dff;
+  --wave-mid: #3ddc84;
+  --wave-high: #f4f4f5;
+}
+html[data-theme="olive"] {
+  --background: #121410;
+  --foreground: #ecefe4;
+  --card: #1a1d17;
+  --popover: #22261e;
+  --sidebar: #151712;
+  --primary: #c6e77c;
+  --primary-foreground: #1d2614;
+  --orange: #f2b46e;
+  --secondary: #262b21;
+  --accent: #2e3824;
+  --muted-foreground: #a5ac98;
+  --border: #2f3529;
+  --destructive: #ff8a70;
+  --screen: #0b0d09;
+  --tile: #252a20;
+  --signal-cue: #ff9150;
+  --signal-play: #a4e36a;
+  --wave-low: #4c9a6e;
+  --wave-mid: #e3c35c;
+  --wave-high: #f5f2e3;
+}
+html[data-theme="graphite"] {
+  --background: #0f1114;
+  --foreground: #eef2f7;
+  --card: #181b20;
+  --popover: #21252c;
+  --sidebar: #131519;
+  --primary: #5fd4f0;
+  --primary-foreground: #062730;
+  --orange: #ff9f4a;
+  --secondary: #23272e;
+  --accent: #1c3640;
+  --muted-foreground: #9aa6b5;
+  --border: #2a2f37;
+  --destructive: #ff8a80;
+  --screen: #090b0e;
+  --tile: #22262d;
+  --signal-cue: #ff7a3d;
+  --signal-play: #3ee08f;
+  --wave-low: #2f6bff;
+  --wave-mid: #f5a524;
+  --wave-high: #ffffff;
+}
+html[data-theme="violet"] {
+  --background: #120f1d;
+  --foreground: #f1ebfc;
+  --card: #1c172b;
+  --popover: #262039;
+  --sidebar: #161224;
+  --primary: #b7a4ff;
+  --primary-foreground: #20163d;
+  --orange: #ff8fc2;
+  --secondary: #2a2340;
+  --accent: #34295a;
+  --muted-foreground: #b1a4ca;
+  --border: #342b4d;
+  --destructive: #ff8f8f;
+  --screen: #0b0914;
+  --tile: #282140;
+  --signal-cue: #ff8a6b;
+  --signal-play: #6ee7b7;
+  --wave-low: #7c5cff;
+  --wave-mid: #ff6fb1;
+  --wave-high: #f6f0ff;
+}
+html[data-theme="studio"] {
+  --background: #131315;
+  --foreground: #f2f2f3;
+  --card: #1c1c1f;
+  --popover: #232327;
+  --sidebar: #161618;
+  --primary: #5cc8f5;
+  --primary-foreground: #06212d;
+  --orange: #f4e04d;
+  --secondary: #26262a;
+  --accent: #1f3540;
+  --muted-foreground: #9a9aa2;
+  --border: #2c2c31;
+  --destructive: #ff7a6b;
+  --screen: #0c0c0e;
+  --tile: #27272b;
+  --signal-cue: #ff7d4a;
+  --signal-play: #3ddc84;
+  --wave-low: #3d6dff;
+  --wave-mid: #3ddc84;
+  --wave-high: #f4f4f5;
 }
 html[data-theme="olive"] {
   --background: #111310;
@@ -63,20 +189,28 @@ html[data-theme="violet"] {
   --destructive: #ff9696;
 }
 html[data-theme="daylight"] {
-  --background: #eef2f5;
-  --foreground: #1c2836;
+  --background: #edf1f5;
+  --foreground: #18222e;
   --card: #ffffff;
   --popover: #ffffff;
-  --sidebar: #e4eaf0;
-  --primary: #006a71;
+  --sidebar: #e5eaf0;
+  --primary: #0a7c86;
   --primary-foreground: #ffffff;
-  --orange: #a84b12;
-  --secondary: #e3eaf0;
-  --accent: #d0e8e9;
-  --muted-foreground: #526173;
-  --border: #b8c6d1;
-  --destructive: #b22a32;
-  --shadow: #3a4b5c;
+  --orange: #c4571a;
+  --secondary: #e6ebf1;
+  --accent: #d4ebed;
+  --muted-foreground: #556375;
+  --border: #d2dae3;
+  --destructive: #c0353e;
+  --shadow: #5a6b7d;
+  --screen: #e8edf2;
+  --tile: #ffffff;
+  --signal-cue: #d9541e;
+  --signal-play: #11915a;
+  --wave-low: #2459d6;
+  --wave-mid: #0f9d74;
+  --wave-high: #18222e;
+  --wave-bg: #dce4ec;
 }
 ::selection {
   background: color-mix(in srgb, var(--primary) 30%, transparent);

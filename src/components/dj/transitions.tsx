@@ -26,7 +26,12 @@ import { MidiInputText } from "./midi-activity"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Link } from "@tanstack/react-router"
-import { techniqueReadiness, transitionChoices } from "@/lib/dj/planner"
+import {
+  harmonicCompatibility,
+  techniqueReadiness,
+  transitionChoices,
+} from "@/lib/dj/planner"
+import type { Track } from "@/lib/dj/types"
 import { formatTime } from "@/lib/dj/tracks"
 import { cueOptions } from "@/lib/dj/cue-suggestions"
 
@@ -328,6 +333,50 @@ export function TransitionPlanner() {
   )
 }
 
+const energyGoals = [
+  { id: "ease", label: "Ease", arrow: "↘", hint: "Pick calmer tracks next" },
+  {
+    id: "maintain",
+    label: "Groove",
+    arrow: "→",
+    hint: "Keep the energy level steady",
+  },
+  { id: "lift", label: "Lift", arrow: "↗", hint: "Build energy with each mix" },
+] as const
+
+/** Quick tempo / key / energy fit chips for the outgoing → next pair. */
+function compatibility(out: Track, next: Track, outRate: number) {
+  const chips: { label: string; fit: "good" | "ok" | "poor"; hint: string }[] =
+    []
+  if (out.bpm && next.bpm) {
+    const gap = (next.bpm / (out.bpm * outRate) - 1) * 100
+    chips.push({
+      label: `${next.bpm.toFixed(0)} BPM ${gap >= 0 ? "+" : "−"}${Math.abs(gap).toFixed(1)}%`,
+      fit: Math.abs(gap) <= 3 ? "good" : Math.abs(gap) <= 8 ? "ok" : "poor",
+      hint: "Tempo change needed to beatmatch",
+    })
+  } else
+    chips.push({ label: "BPM ?", fit: "ok", hint: "Tempo not analyzed yet" })
+  if (out.camelot && next.camelot) {
+    const harmonic = harmonicCompatibility(out.camelot, next.camelot)
+    chips.push({
+      label: `${out.camelot} → ${next.camelot}`,
+      fit: harmonic >= 0.9 ? "good" : harmonic >= 0.5 ? "ok" : "poor",
+      hint:
+        harmonic >= 0.9
+          ? "Harmonically compatible keys"
+          : "Keys may clash · keep melodic overlap short",
+    })
+  } else chips.push({ label: "Key ?", fit: "ok", hint: "Key not analyzed yet" })
+  const delta = (next.energy ?? 5) - (out.energy ?? 5)
+  chips.push({
+    label: delta > 1 ? "↗ energy" : delta < -1 ? "↘ energy" : "→ energy",
+    fit: "good",
+    hint: `Energy ${out.energy ?? "?"} → ${next.energy ?? "?"}`,
+  })
+  return chips
+}
+
 export function TransitionCoach() {
   const {
     engine,
@@ -421,8 +470,36 @@ export function TransitionCoach() {
     : state.auto
       ? incoming.track
       : null
+  const upcoming =
+    next ?? (automix.phase === "selecting" ? null : incoming.track)
+  const fit =
+    upcoming && out.track ? compatibility(out.track, upcoming, out.rate) : []
+  const approach = plan
+    ? state.auto
+      ? 1
+      : Math.min(1, Math.max(0, out.position / Math.max(0.01, plan.outStart)))
+    : 0
+  const countdown = state.auto
+    ? `${Math.round(state.transition * 100)}% mixed`
+    : !plan
+      ? ""
+      : out.playing && barsUntil > 0
+        ? `in ${barsUntil} bar${barsUntil === 1 ? "" : "s"}`
+        : out.playing
+          ? "now"
+          : `${plan.bars} bars · ${plan.score}/100`
+  const status =
+    automix.phase === "complete"
+      ? { tone: "done", label: "Done" }
+      : state.auto && state.transition > 0
+        ? { tone: "live", label: "Mixing" }
+        : automix.phase === "selecting"
+          ? { tone: "armed", label: "Choosing" }
+          : running
+            ? { tone: "armed", label: "Armed" }
+            : { tone: "off", label: midi.connected ? "Controller" : "Off" }
   const nextTitle =
-    next?.title ??
+    upcoming?.title ??
     (automix.phase === "complete"
       ? "All available tracks played"
       : automix.phase === "finishing"
@@ -442,6 +519,10 @@ export function TransitionCoach() {
       <div className="automix-toolbar">
         <label className="coach-auto-control">
           <strong>Automix</strong>
+          <span className="automix-status" data-tone={status.tone}>
+            <span className="status-dot" />
+            {status.label}
+          </span>
           <Switch
             checked={running}
             disabled={!engine || (!running && blocked)}
@@ -453,30 +534,27 @@ export function TransitionCoach() {
             }}
           />
         </label>
+        <div
+          className="automix-energy"
+          role="radiogroup"
+          aria-label="Automix energy goal"
+        >
+          {energyGoals.map((goal) => (
+            <button
+              key={goal.id}
+              type="button"
+              role="radio"
+              aria-checked={database.session.mixIntent === goal.id}
+              title={goal.hint}
+              onClick={() => setMixIntent(goal.id)}
+            >
+              <span aria-hidden="true">{goal.arrow}</span>
+              {goal.label}
+            </button>
+          ))}
+        </div>
         <label className="automix-picker">
-          <span>Energy{state.auto ? " · next pick" : ""}</span>
-          <Select
-            value={database.session.mixIntent}
-            onValueChange={(value) => value && setMixIntent(value)}
-          >
-            <SelectTrigger aria-label="Automix energy goal">
-              <SelectValue>
-                {database.session.mixIntent === "lift"
-                  ? "Lift energy"
-                  : database.session.mixIntent === "ease"
-                    ? "Ease energy"
-                    : "Maintain groove"}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="maintain">Maintain groove</SelectItem>
-              <SelectItem value="lift">Lift energy</SelectItem>
-              <SelectItem value="ease">Ease energy</SelectItem>
-            </SelectContent>
-          </Select>
-        </label>
-        <label className="automix-picker">
-          <span>Transition{state.auto ? " · next mix" : ""}</span>
+          <span>Style{state.auto ? " · next mix" : ""}</span>
           <Select
             value={database.session.transitionTechnique ?? "auto"}
             onValueChange={(value) =>
@@ -639,49 +717,82 @@ export function TransitionCoach() {
           </Button>
         </div>
       </div>
-      <div className="automix-now">
-        <div className="automix-next" aria-live="polite" aria-atomic="true">
+      <div className="automix-flow">
+        <div className="automix-deck" data-deck={outId}>
           <span className="automix-eyebrow">
-            {automix.phase === "selecting" ? "PREPARING" : "NEXT UP"}
-            {next ? ` · DECK ${inId}` : ""}
+            {out.playing ? "NOW PLAYING" : "OUTGOING"} · DECK {outId}
           </span>
-          <strong title={nextTitle}>{nextTitle}</strong>
-          <span title={next?.artist ?? scopeLabel}>
-            {next
-              ? `${next.artist} · ${next.bpm ? `${next.bpm} BPM · ` : ""}${scopeLabel}`
-              : `${scopeLabel} · ${playableCount} playable`}
+          <strong title={out.track?.title}>
+            {out.track?.title ?? "Load a track"}
+          </strong>
+          <span className="automix-meta">
+            {out.track
+              ? [
+                  out.track.artist,
+                  out.track.bpm
+                    ? `${(out.track.bpm * out.rate).toFixed(1)} BPM`
+                    : null,
+                  out.track.camelot,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : "Deck is empty"}
           </span>
         </div>
-        <div className="automix-current">
-          <span className="automix-eyebrow">
-            {state.auto
-              ? `CURRENT · ${plan?.name ?? "Transition"} · ${outId} → ${inId}`
-              : running
-                ? "AUTOMIX ENABLED"
-                : "TRANSITION PREVIEW"}
-          </span>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="coach-cue-trigger"
-            disabled={!plan || running}
-            aria-label="Choose transition cue pair"
-            onClick={() => {
-              setInitialTab("cues")
-              setDetailsTab("explore")
-              setDetails(true)
-            }}
+        <div className="automix-bridge">
+          <div className="automix-bridge-head">
+            <strong>
+              {(state.auto && state.autoPlan?.name) ||
+                plan?.name ||
+                "No transition yet"}
+            </strong>
+            <span>{countdown}</span>
+          </div>
+          <div
+            className="automix-lane"
+            data-mixing={state.auto || undefined}
+            style={
+              {
+                "--approach": `${approach * 100}%`,
+                "--mix": `${Math.min(1, Math.max(0, progress)) * 100}%`,
+              } as CSSProperties
+            }
+            role="progressbar"
+            aria-label="Automix progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(
+              (state.auto ? state.transition : approach) * 100
+            )}
           >
-            <span>
-              {outId} {formatTime(plan?.outStart ?? 0)}
-            </span>
-            <Icon name="right" size={12} />
-            <span>
-              {inId} {formatTime(plan?.inStart ?? 0)}
-            </span>
-          </Button>
-          <div className="compact-coach-guidance">
+            <span className="lane-approach" />
+            <span className="lane-mix" />
+          </div>
+          <div className="automix-bridge-foot">
+            <Button
+              variant="ghost"
+              size="xs"
+              className="coach-cue-trigger"
+              disabled={!plan || running}
+              aria-label="Choose transition cue pair"
+              title="Choose exit and entry cues"
+              onClick={() => {
+                setInitialTab("cues")
+                setDetailsTab("explore")
+                setDetails(true)
+              }}
+            >
+              <span>
+                {outId} out {formatTime(plan?.outStart ?? 0)}
+              </span>
+              <Icon name="right" size={12} />
+              <span>
+                {inId} in {formatTime(plan?.inStart ?? 0)}
+              </span>
+            </Button>
             <span
+              className="automix-guidance"
+              aria-live="polite"
               title={
                 state.auto
                   ? `Channel mixing · crossfader 50%. ${state.autoLevels}`
@@ -700,13 +811,36 @@ export function TransitionCoach() {
                       : state.autoStatus
                     : instruction}
             </span>
-            {state.auto && (
-              <Progress
-                value={state.transition * 100}
-                aria-label="Automix progress"
-              />
-            )}
           </div>
+        </div>
+        <div
+          className="automix-deck automix-next"
+          data-deck={inId}
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <span className="automix-eyebrow">
+            {automix.phase === "selecting"
+              ? "PREPARING"
+              : next
+                ? "AUTOMIX PICK"
+                : "NEXT UP"}{" "}
+            · DECK {inId}
+          </span>
+          <strong title={nextTitle}>{nextTitle}</strong>
+          {upcoming && out.track ? (
+            <span className="automix-chips">
+              {fit.map((chip) => (
+                <span key={chip.label} data-fit={chip.fit} title={chip.hint}>
+                  {chip.label}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span className="automix-meta">
+              {`${scopeLabel} · ${playableCount} playable`}
+            </span>
+          )}
         </div>
       </div>
     </Card>

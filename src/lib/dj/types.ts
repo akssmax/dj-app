@@ -33,9 +33,17 @@ export type Track = {
   grid?: { bpm: number; offset: number; originalBpm: number | null }
   memoryCues?: number[]
 }
+/** Per-window RMS levels aligned with Analysis.peaks. */
+export type WaveBands = {
+  rms: number[]
+  low: number[]
+  mid: number[]
+  high: number[]
+}
 export type Analysis = {
   analyzedAt?: string
   peaks: number[]
+  bands?: WaveBands
   energyCurve: number[]
   bpm: number | null
   beatOffset: number

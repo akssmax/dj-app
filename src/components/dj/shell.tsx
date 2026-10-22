@@ -24,7 +24,7 @@ import { FullscreenButton } from "./fullscreen"
 import { Meter } from "./meter"
 import { MidiInputText, MidiHistory } from "./midi-activity"
 import { Icon } from "./icons"
-import { AppearanceSettings, DensitySelect, ThemeSelect } from "./appearance"
+import { AppearanceSettings, ThemeSelect } from "./appearance"
 import type { ReactNode } from "react"
 import type { StudioLayout } from "@/lib/dj/themes"
 
@@ -140,6 +140,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           className={`nav-item ${pathname === "/" ? "nav-active" : ""}`}
           nativeButton={false}
           aria-label="DJ studio"
+          title={sidebarCollapsed ? "DJ studio" : undefined}
           onClick={() => setMobileNavOpen(false)}
           render={<Link to="/" />}
         >
@@ -151,6 +152,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           variant="ghost"
           className="nav-item"
           aria-label="Music library"
+          title={sidebarCollapsed ? "Music library" : undefined}
           onClick={() => library("all")}
         >
           <Icon name="library" />
@@ -162,6 +164,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           className={`nav-item ${pathname === "/learn" ? "nav-active" : ""}`}
           nativeButton={false}
           aria-label="Learn to mix"
+          title={sidebarCollapsed ? "Learn to mix" : undefined}
           onClick={() => setMobileNavOpen(false)}
           render={<Link to="/learn" />}
         >
@@ -178,6 +181,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           variant="ghost"
           className="nav-item"
           aria-label="Favorites"
+          title={sidebarCollapsed ? "Favorites" : undefined}
           onClick={() => library("favorites")}
         >
           <Icon name="heart" />
@@ -188,6 +192,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           variant="ghost"
           className="nav-item"
           aria-label="Automix queue"
+          title={sidebarCollapsed ? "Automix queue" : undefined}
           onClick={() => library("queue")}
         >
           <Icon name="shuffle" />
@@ -198,6 +203,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           variant="ghost"
           className="nav-item"
           aria-label="On this device"
+          title={sidebarCollapsed ? "On this device" : undefined}
           onClick={() => library("local")}
         >
           <Icon name="folder" />
@@ -242,6 +248,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           variant="ghost"
           className="nav-item"
           aria-label="Settings"
+          title={sidebarCollapsed ? "Settings" : undefined}
           onClick={() => openSettings("audio")}
         >
           <Icon name="settings" />
@@ -329,32 +336,51 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </Tabs>
               )}
               <div className="topbar-actions">
-                <DensitySelect />
                 <ThemeSelect />
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="appearance-button"
+                  aria-label="Theme and interface size"
+                  title="Theme and interface size"
+                  onClick={() => openSettings("appearance")}
+                >
+                  <Icon name="sparkles" size={17} />
+                </Button>
                 <div className="session-actions">
                   <Button
                     variant="outline"
                     onClick={saveSession}
                     disabled={!engine}
+                    aria-label="Save session"
+                    title="Save session"
                   >
                     <Icon name="download" size={15} />
-                    Save session
+                    <span className="btn-label">Save session</span>
                   </Button>
                   <Button
                     variant="outline"
                     className={state.recording ? "recording-button" : ""}
                     onClick={() => void engine?.toggleRecording()}
                     disabled={!engine}
+                    aria-label={
+                      state.recording ? "Stop recording" : "Record mix"
+                    }
+                    title={state.recording ? "Stop recording" : "Record mix"}
                   >
                     <span
                       className={`record-dot ${state.recording ? "recording" : ""}`}
                     />
-                    {state.recording ? "Stop recording" : "Record mix"}
+                    <span className="btn-label">
+                      {state.recording ? "Stop recording" : "Record mix"}
+                    </span>
                   </Button>
                   {state.lastRecording && (
                     <Button
                       variant="outline"
                       nativeButton={false}
+                      aria-label="Download mix"
+                      title="Download mix"
                       render={
                         <a
                           href={state.lastRecording.url}
@@ -362,8 +388,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                         />
                       }
                     >
-                      <Icon name="download" size={15} />
-                      Download mix
+                      <Icon name="music" size={15} />
+                      <span className="btn-label">Download mix</span>
                     </Button>
                   )}
                 </div>
@@ -389,7 +415,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                   onClick={() => openSettings("controller")}
                 >
                   <Icon name="usb" size={15} />
-                  {midi.connected ? "FLX4 connected" : "MIDI ready"}
+                  <span className="btn-label">
+                    {midi.connected ? "FLX4 connected" : "MIDI ready"}
+                  </span>
                   <span
                     className={`status-dot ${midi.connected ? "connected" : ""}`}
                   />

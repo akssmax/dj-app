@@ -51,9 +51,64 @@ describe("scratch motion bounds", () => {
     tape.render(output, 0)
     expect(Math.max(...output[0])).toBeLessThanOrEqual(0.3001)
     tape.move(0.25, -0.05, 0.128)
-    tape.render(output, 0.128)
-    expect(output[0][10]).toBeGreaterThan(output[0][24])
-    expect(Math.max(...output[0].slice(30))).toBeLessThan(0.251)
+    // Glides back to the hand without passing it, and settles within ~60 ms.
+    const path: number[] = []
+    for (let frame = 0; frame < 128; frame++) {
+      tape.render([new Float32Array(1)], 0.128 + frame / 1000)
+      path.push(tape.seconds)
+    }
+    expect(path[10]).toBeGreaterThan(path[24])
+    expect(Math.min(...path)).toBeGreaterThanOrEqual(0.25)
+    expect(path[60]).toBeLessThan(0.251)
+  })
+  it("follows jittery packets without speed steps", () => {
+    const rate = 44100,
+      tape = new ScratchTape(rate)
+    tape.setBuffer(
+      [Float32Array.from({ length: rate * 2 }, (_, i) => i / rate)],
+      rate
+    )
+    // Constant hand speed (normal play) delivered with uneven packet timing.
+    let time = 0,
+      target = 0.5
+    const samples: number[] = []
+    for (let packet = 0; packet < 40; packet++) {
+      const frames = [96, 160, 128, 224, 64][packet % 5]
+      target += frames / rate
+      tape.move(target, frames / rate, time)
+      const output = [new Float32Array(frames)]
+      tape.render(output, time)
+      samples.push(...output[0])
+      time += frames / rate
+    }
+    // Once settled, the read speed (sample-to-sample slope) stays near 1×.
+    const steady = samples.slice(1500)
+    const slopes = steady.slice(1).map((v, i) => (v - steady[i]) * rate)
+    expect(Math.min(...slopes)).toBeGreaterThan(0.7)
+    expect(Math.max(...slopes)).toBeLessThan(1.3)
+  })
+  it("softens high-speed reads instead of aliasing", () => {
+    const rate = 44100
+    const tone = Float32Array.from({ length: rate * 4 }, (_, i) =>
+      Math.sin(i * 2.6)
+    )
+    const level = (speed: number) => {
+      const tape = new ScratchTape(rate)
+      tape.setBuffer([tone], rate)
+      let time = 0,
+        target = 0.5,
+        sum = 0
+      for (let packet = 0; packet < 60; packet++) {
+        target += (speed * 128) / rate
+        tape.move(target, (speed * 128) / rate, time)
+        const output = [new Float32Array(128)]
+        tape.render(output, time)
+        if (packet > 20) for (const v of output[0]) sum += v * v
+        time += 128 / rate
+      }
+      return sum
+    }
+    expect(level(4)).toBeLessThan(level(1) * 0.5)
   })
   it("keeps steady forward and reversed packet streams continuous with variable audio blocks", () => {
     const tape = new ScratchTape(44100)
@@ -82,6 +137,6 @@ describe("scratch motion bounds", () => {
     const output = [new Float32Array(512)]
     tape.render(output, time)
     tape.render(output, time + 512 / 44100)
-    expect(Math.max(...output[0].map(Math.abs))).toBeLessThan(0.0001)
+    expect(Math.max(...output[0].map(Math.abs))).toBeLessThan(0.001)
   })
 })

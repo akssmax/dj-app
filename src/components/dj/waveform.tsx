@@ -3,8 +3,10 @@ import { Slider } from "@/components/ui/slider"
 import { Button } from "@/components/ui/button"
 import type { Track, Transition } from "@/lib/dj/types"
 import { formatTime } from "@/lib/dj/tracks"
-import { waveformPath } from "@/lib/dj/wave-peaks"
-import { useEffect, useId, useMemo, useRef, useState } from "react"
+import { waveColumns } from "@/lib/dj/wave-peaks"
+import { drawWave, fitCanvas, readPalette } from "./wave-canvas"
+import { useDJ } from "./provider"
+import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import type { SuggestedCue } from "@/lib/dj/cue-suggestions"
 import {
@@ -69,6 +71,7 @@ export function Waveform({
   heading?: ReactNode
 }) {
   const peaks = track?.analysis?.peaks ?? []
+  const { theme, waveStyle } = useDJ()
   const fullDuration = track?.duration || 1
   const minimum = Math.min(fullDuration, Math.max(1, 240 / (track?.bpm || 120)))
   const baseline = boundTimeline(
@@ -140,12 +143,73 @@ export function Waveform({
   const beatOffset = gridOffset(track)
   const firstBar = Math.max(0, Math.floor((start - beatOffset) / barLength))
   const barCount = Math.min(800, Math.ceil(duration / barLength) + 2)
-  const path = useMemo(
-    () => waveformPath(peaks, fullDuration, start, end, height),
-    [peaks, fullDuration, start, end, height]
-  )
-  const clip = useId()
-  const progressX = Math.max(0, Math.min(width, x(position)))
+  const bands = track?.analysis?.bands
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const plot = useRef<SVGSVGElement>(null)
+  const [plotBox, setPlotBox] = useState({
+    left: 0,
+    top: 0,
+    width: 0,
+    height: 0,
+  })
+  // The canvas sits under the SVG's content box so overlays keep their geometry.
+  useEffect(() => {
+    const svg = plot.current,
+      container = waveform.current
+    if (!svg || !container) return
+    const measure = () => {
+      const box = svg.getBoundingClientRect(),
+        parent = container.getBoundingClientRect(),
+        style = getComputedStyle(svg)
+      const top = parseFloat(style.paddingTop) || 0,
+        bottom = parseFloat(style.paddingBottom) || 0
+      setPlotBox({
+        left: box.left - parent.left - container.clientLeft,
+        top: box.top - parent.top - container.clientTop + top,
+        width: box.width,
+        height: Math.max(0, box.height - top - bottom),
+      })
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(svg)
+    return () => observer.disconnect()
+  }, [])
+  useEffect(() => {
+    const element = canvas.current,
+      context = element?.getContext("2d")
+    if (!element || !context || !plotBox.width) return
+    fitCanvas(element)
+    context.clearRect(0, 0, element.width, element.height)
+    if (!peaks.length) return
+    const columns = waveColumns(
+      peaks,
+      bands,
+      fullDuration,
+      start,
+      end,
+      element.width
+    )
+    drawWave(
+      context,
+      columns,
+      readPalette(element),
+      !!bands,
+      ((position - start) / (end - start)) * element.width,
+      waveStyle
+    )
+  }, [
+    peaks,
+    bands,
+    fullDuration,
+    start,
+    end,
+    position,
+    plotBox,
+    color,
+    theme,
+    waveStyle,
+  ])
   const cueLanes: number[] = []
   const visibleSuggestions = suggested
     .filter((cue) => cue.position >= start && cue.position <= end)
@@ -261,7 +325,14 @@ export function Waveform({
         data-view-end={end}
         className={`waveform waveform-${color} ${compact ? "waveform-compact" : ""}`}
       >
+        <canvas
+          ref={canvas}
+          className="waveform-canvas"
+          aria-hidden="true"
+          style={plotBox}
+        />
         <svg
+          ref={plot}
           viewBox={`0 0 ${width} ${height}`}
           preserveAspectRatio="none"
           role="img"
@@ -330,23 +401,6 @@ export function Waveform({
                 opacity="0.18"
               />
             ))}
-          <defs>
-            <clipPath id={clip}>
-              <rect
-                x={progressX}
-                y={0}
-                width={width - progressX}
-                height={height}
-              />
-            </clipPath>
-          </defs>
-          <path d={path} fill="currentColor" opacity="0.42" />
-          <path
-            d={path}
-            fill="currentColor"
-            opacity="0.5"
-            clipPath={`url(#${clip})`}
-          />
           {!peaks.length && (
             <>
               <line
@@ -367,8 +421,8 @@ export function Waveform({
                   x2={x(cue)}
                   y1="0"
                   y2={height}
-                  stroke="currentColor"
-                  strokeOpacity="0.6"
+                  stroke={`var(--hot-${i + 1}, currentColor)`}
+                  strokeWidth="1.5"
                 />
               </g>
             ) : null
@@ -408,6 +462,7 @@ export function Waveform({
                 title={`Cue ${i + 1}${cueLabels[i] ? ` · ${cueLabels[i]}` : ""} · ${formatTime(cue)}`}
                 style={{
                   insetInlineStart: `${Math.min(94, ((cue - start) / duration) * 100)}%`,
+                  background: `var(--hot-${i + 1})`,
                 }}
               >
                 {i + 1}

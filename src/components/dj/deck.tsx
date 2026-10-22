@@ -14,6 +14,7 @@ import { useDJ, useEngine, useTransitionPlan } from "./provider"
 import { Icon } from "./icons"
 import type { WaveformZone } from "./waveform"
 import { Artwork, Waveform } from "./waveform"
+import { ScrollingWaveform } from "./scrolling-waveform"
 import { DeckFX, DeckTools } from "./performance-tools"
 import { formatTime } from "@/lib/dj/tracks"
 import { deckOutputWarning, effectiveDeckRate } from "@/lib/dj/engine"
@@ -184,62 +185,61 @@ export function Deck({
           </TooltipContent>
         </Tooltip>
       </div>
-      <div className="deck-metrics">
-        <div>
-          <span className="metric-caption">TEMPO</span>
-          <strong>
-            {track?.bpm
-              ? (track.bpm * effectiveDeckRate(deck)).toFixed(1)
-              : "—"}
-            <small>BPM</small>
-          </strong>
-        </div>
-        <div>
-          <span className="metric-caption">KEY · EST.</span>
-          <strong className="key-value">
-            {track?.camelot ?? "—"}
-            <small>{track?.key ?? "Analyzing"}</small>
-          </strong>
-        </div>
-        <div className="deck-time">
-          <span className="metric-caption">ELAPSED / REMAINING</span>
-          <strong>
-            {formatTime(deck.position)}
-            <small>−{formatTime((track?.duration ?? 0) - deck.position)}</small>
-          </strong>
-        </div>
-      </div>
-      <Waveform
-        key={track?.id ?? "empty"}
-        zoomable={enabled}
-        heading={
-          <div className="wave-heading">
-            <span>
-              <span className={`tiny-square bg-${color}`} />
-              {learning ? "32-BAR PRACTICE VIEW" : "PHRASE GRID"}{" "}
-              <span className="muted">
-                · {track?.grid ? "CORRECTED" : "ESTIMATED"}
-              </span>
-            </span>
-            <span>{phraseCaption}</span>
+      <div className="deck-screen">
+        <div className="deck-metrics">
+          <div>
+            <span className="metric-caption">TEMPO</span>
+            <strong>
+              {track?.bpm
+                ? (track.bpm * effectiveDeckRate(deck)).toFixed(1)
+                : "—"}
+              <small>BPM</small>
+            </strong>
           </div>
-        }
-        track={track}
-        position={deck.position}
-        color={color}
-        onSeek={(pos) => engine?.seek(id, pos)}
-        plan={plan}
-        cues={deck.cues}
-        cueLabels={deck.cueLabels}
-        zone={mixZone}
-        suggested={annotations.cues}
-        highlights={annotations.zones}
-        viewRange={
-          learning
-            ? { start: phraseStart, end: phraseStart + beatLength * 128 }
-            : undefined
-        }
-      />
+          <div>
+            <span className="metric-caption">KEY · EST.</span>
+            <strong className="key-value">
+              {track?.camelot ?? "—"}
+              <small>{track?.key ?? "Analyzing"}</small>
+            </strong>
+          </div>
+          <div className="deck-time">
+            <span className="metric-caption">ELAPSED / REMAINING</span>
+            <strong>
+              {formatTime(deck.position)}
+              <small>
+                −{formatTime((track?.duration ?? 0) - deck.position)}
+              </small>
+            </strong>
+          </div>
+        </div>
+        <ScrollingWaveform
+          id={id}
+          zone={mixZone}
+          suggested={annotations.cues}
+          highlights={annotations.zones.slice(1)}
+          caption={`${learning ? "practice · " : ""}${track?.grid ? "grid ✓" : "est. grid"} · ${phraseCaption.toLowerCase().replace("16-bar phrase", "phrase")}`}
+        />
+        <Waveform
+          key={track?.id ?? "empty"}
+          compact
+          track={track}
+          position={deck.position}
+          color={color}
+          onSeek={(pos) => engine?.seek(id, pos)}
+          plan={plan}
+          cues={deck.cues}
+          cueLabels={deck.cueLabels}
+          zone={mixZone}
+          suggested={annotations.cues}
+          highlights={annotations.zones}
+          viewRange={
+            learning
+              ? { start: phraseStart, end: phraseStart + beatLength * 128 }
+              : undefined
+          }
+        />
+      </div>
       <div
         className="deck-audio-status"
         role={audioWarning ? "status" : undefined}

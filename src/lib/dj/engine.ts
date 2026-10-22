@@ -58,6 +58,10 @@ type Channel = {
   loadVersion: number
   transportVersion: number
 }
+/** A touched jog behaves like a 33⅓ RPM record: one turn is 1.8 s of audio.
+ * DDJ-400/FLX4-class jogs send roughly 720 ticks per turn. */
+const SCRATCH_SECONDS_PER_TICK = 1.8 / 720
+
 export type EngineState = {
   A: DeckState
   B: DeckState
@@ -533,6 +537,8 @@ export class DJEngine {
         this.state[id].track = detailed
         this.onAnalysis?.(detailed)
       }
+      if (this.state[id].track.analysis && !this.state[id].track.analysis.bands)
+        this.backfillBands(id, buffer, version)
       this.state[id].loading = false
       this.applyChannel(id)
       this.applyMix()
@@ -682,6 +688,54 @@ export class DJEngine {
     return promise
   }
 
+  /** Tracks analyzed before 3-band waveforms existed get their band levels
+   * from the analysis worker, keeping the ~1 s of filtering off the UI thread. */
+  private backfillBands(id: DeckId, buffer: AudioBuffer, version: number) {
+    let worker: Worker
+    try {
+      worker = new Worker(new URL("./analysis.worker.ts", import.meta.url), {
+        type: "module",
+      })
+    } catch {
+      return
+    }
+    const done = () => worker.terminate()
+    worker.onerror = done
+    worker.onmessage = (
+      event: MessageEvent<Pick<Analysis, "peaks" | "bands">>
+    ) => {
+      done()
+      const deck = this.state[id],
+        analysis = deck.track?.analysis
+      if (
+        this.channels[id]?.loadVersion !== version ||
+        !analysis ||
+        analysis.bands
+      )
+        return
+      deck.track = {
+        ...deck.track!,
+        analysis: {
+          ...analysis,
+          peaks: event.data.peaks,
+          bands: event.data.bands,
+        },
+      }
+      this.onAnalysis?.(deck.track)
+      this.publish()
+    }
+    const channels = Array.from({ length: buffer.numberOfChannels }, (_, c) =>
+      buffer.getChannelData(c).slice()
+    )
+    worker.postMessage(
+      { channels, sampleRate: buffer.sampleRate, waveformOnly: true },
+      channels.map((samples) => samples.buffer)
+    )
+  }
+  /** Audio-clock position for animation; the published state updates every 50 ms. */
+  livePosition(id: DeckId) {
+    return this.position(id)
+  }
   private position(id: DeckId, time = this.context?.currentTime ?? 0) {
     const deck = this.state[id],
       ch = this.channels[id]
@@ -1996,7 +2050,10 @@ export class DJEngine {
         this.state[id === "A" ? "B" : "A"].syncTo = null
         deck.position = Math.max(
           0,
-          Math.min(deck.track?.duration ?? 0, deck.position + delta * 0.025)
+          Math.min(
+            deck.track?.duration ?? 0,
+            deck.position + delta * SCRATCH_SECONDS_PER_TICK
+          )
         )
         this.previewJog(id, delta)
         this.publish()
@@ -2032,7 +2089,7 @@ export class DJEngine {
       ch.scratch.port.postMessage({
         type: "move",
         position: this.state[id].position,
-        delta: delta * 0.025,
+        delta: delta * SCRATCH_SECONDS_PER_TICK,
         time: ctx.currentTime,
       })
       return

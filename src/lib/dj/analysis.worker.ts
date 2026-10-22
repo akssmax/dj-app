@@ -1,6 +1,6 @@
 import MusicTempo from "music-tempo"
 import type { Analysis } from "./types"
-import { measurePeaks } from "./wave-peaks"
+import { measureBands, measurePeaks } from "./wave-peaks"
 
 // FFT + Krumhansl-Schmuckler profiles: a provisional global key, not ground truth.
 function keyEstimate(samples: Float32Array, sampleRate: number) {
@@ -103,15 +103,24 @@ self.onmessage = (
     samples?: Float32Array
     channels?: Float32Array[]
     sampleRate: number
+    waveformOnly?: boolean
   }>
 ) => {
   const { sampleRate } = event.data
   const channels = event.data.channels ?? [event.data.samples!]
+  if (event.data.waveformOnly) {
+    self.postMessage({
+      peaks: measurePeaks(channels, sampleRate),
+      bands: measureBands(channels, sampleRate),
+    })
+    return
+  }
   const samples = new Float32Array(channels[0].length)
   for (const channel of channels)
     for (let i = 0; i < channel.length; i++)
       samples[i] += channel[i] / channels.length
   const peaks = measurePeaks(channels, sampleRate),
+    bands = measureBands(channels, sampleRate),
     energyCurve: number[] = []
   for (let i = 0; i < samples.length; i += sampleRate) {
     let sum = 0,
@@ -142,6 +151,7 @@ self.onmessage = (
     energyCurve.reduce((a, b) => a + b, 0) / Math.max(1, energyCurve.length)
   const result: Analysis = {
     peaks,
+    bands,
     energyCurve,
     bpm,
     beatOffset,

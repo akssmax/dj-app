@@ -1087,6 +1087,9 @@ export function DJProvider({ children }: { children: ReactNode }) {
     density: database.session.density,
     setDensity: (density) =>
       update((db) => ({ ...db, session: { ...db.session, density } })),
+    waveStyle: database.session.waveStyle,
+    setWaveStyle: (waveStyle) =>
+      update((db) => ({ ...db, session: { ...db.session, waveStyle } })),
     setTheme: (theme) =>
       update((db) => ({ ...db, session: { ...db.session, theme } })),
     layout: database.session.layout,

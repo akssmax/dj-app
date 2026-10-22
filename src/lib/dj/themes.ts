@@ -1,27 +1,33 @@
 export const themes = [
   {
+    id: "studio",
+    name: "Studio",
+    description: "Soft charcoal hardware · cyan + yellow decks",
+    swatches: ["#18181b", "#5cc8f5", "#f4e04d"],
+  },
+  {
     id: "olive",
     name: "Cue Olive",
-    description: "Warm olive surfaces · lime + amber decks",
-    swatches: ["#111310", "#cfed8c", "#e9ad78"],
+    description: "Warm olive hardware · lime + amber decks",
+    swatches: ["#121410", "#c6e77c", "#f2b46e"],
   },
   {
     id: "graphite",
     name: "Club Graphite",
-    description: "Neutral booth surfaces · cyan + orange decks",
-    swatches: ["#111318", "#69d9f2", "#ffb263"],
+    description: "Club booth graphite · cyan + orange decks",
+    swatches: ["#0f1114", "#5fd4f0", "#ff9f4a"],
   },
   {
     id: "violet",
     name: "Midnight Violet",
-    description: "Deep purple surfaces · lavender + pink decks",
-    swatches: ["#14101f", "#c2b3ff", "#ff9bbd"],
+    description: "Deep night violet · lavender + pink decks",
+    swatches: ["#120f1d", "#b7a4ff", "#ff8fc2"],
   },
   {
     id: "daylight",
     name: "Daylight",
-    description: "Bright surfaces · teal + burnt orange decks",
-    swatches: ["#eef2f5", "#006a71", "#a84b12"],
+    description: "Bright paper surfaces · teal + rust decks",
+    swatches: ["#edf1f5", "#0a7c86", "#c4571a"],
   },
 ] as const
 export type ThemeId = (typeof themes)[number]["id"]
