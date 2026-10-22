@@ -17,7 +17,12 @@ export function FullscreenButton() {
       document.fullscreenEnabled &&
         typeof document.documentElement.requestFullscreen === "function"
     )
-    const changed = () => setActive(!!document.fullscreenElement)
+    const changed = () => {
+      const full = !!document.fullscreenElement
+      setActive(full)
+      // CSS hook for layouts that :fullscreen alone cannot reach reliably.
+      document.documentElement.toggleAttribute("data-fullscreen", full)
+    }
     changed()
     document.addEventListener("fullscreenchange", changed)
     return () => document.removeEventListener("fullscreenchange", changed)

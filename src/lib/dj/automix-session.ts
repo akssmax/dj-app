@@ -250,7 +250,7 @@ export class AutomixSession {
       deck.track,
       pool.filter((track) => !this.unavailable.has(track.id)),
       undefined,
-      deck.rate,
+      this.engine.plannedRate(out),
       options.session.mixIntent,
       {
         position: deck.position,
@@ -260,6 +260,7 @@ export class AutomixSession {
         cues: options.cues,
         labels: options.labels,
         played: this.played,
+        lookahead: true,
         limit: 1,
       }
     ).at(0)

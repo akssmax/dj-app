@@ -214,6 +214,9 @@ export class DJEngine {
   private recorder?: MediaRecorder
   private listeners = new Set<() => void>()
   private publishFrame: number | null = null
+  private tempoGlides: Partial<
+    Record<DeckId, { from: number; start: number; duration: number }>
+  > = {}
   private interval: ReturnType<typeof setInterval>
   private automation?: {
     out: DeckId
@@ -426,6 +429,7 @@ export class DJEngine {
     this.init()
     this.state.error = null
     this.cancelAuto()
+    delete this.tempoGlides[id]
     this.releasePadFX(id)
     this.pause(id)
     this.state.A.syncTo = null
@@ -1724,34 +1728,9 @@ export class DJEngine {
     const deck = this.state[id],
       ch = this.channels[id]
     if (key === "rate") {
-      deck.syncTo = null
-      const bounded = Math.min(1.16, Math.max(0.84, value))
-      deck.position = this.position(id)
-      if (ch && this.context) {
-        if (ch.slipAnchor) {
-          ch.slipAnchor.position = this.slipPosition(id)!
-          ch.slipAnchor.time = this.context.currentTime
-          ch.slipAnchor.rate = bounded
-        }
-        ch.startOffset = deck.position
-        ch.startTime = this.context.currentTime
-        if (ch.source) ch.source.playbackRate.value = bounded
-        this.refreshPitch(id)
-      }
-      deck.rate = bounded
-      const otherId = id === "A" ? "B" : "A"
-      const follower = this.state[otherId]
-      if (follower.syncTo === id && deck.track?.bpm && follower.track?.bpm) {
-        const linkedRate =
-          (deck.track.bpm * effectiveDeckRate(deck)) / follower.track.bpm
-        if (linkedRate >= 0.84 && linkedRate <= 1.16) {
-          this.setParam(otherId, "rate", linkedRate)
-          this.state[otherId].syncTo = id
-        } else {
-          follower.syncTo = null
-          this.state.error = `Deck ${otherId} sync released: tempo exceeds ±16%.`
-        }
-      }
+      // A hand on the tempo always wins over the automatic return to native.
+      delete this.tempoGlides[id]
+      this.applyRate(id, value)
     } else {
       value = Math.min(
         key === "volume" || key === "filter" ? 1 : 12,
@@ -1791,6 +1770,83 @@ export class DJEngine {
       else this.writeParam(ch[key].gain, deck[key])
     }
     this.publish()
+  }
+  private applyRate(id: DeckId, value: number) {
+    const deck = this.state[id],
+      ch = this.channels[id]
+    deck.syncTo = null
+    const bounded = Math.min(1.16, Math.max(0.84, value))
+    deck.position = this.position(id)
+    if (ch && this.context) {
+      if (ch.slipAnchor) {
+        ch.slipAnchor.position = this.slipPosition(id)!
+        ch.slipAnchor.time = this.context.currentTime
+        ch.slipAnchor.rate = bounded
+      }
+      ch.startOffset = deck.position
+      ch.startTime = this.context.currentTime
+      if (ch.source) ch.source.playbackRate.value = bounded
+      this.refreshPitch(id)
+    }
+    deck.rate = bounded
+    const otherId = id === "A" ? "B" : "A"
+    const follower = this.state[otherId]
+    if (follower.syncTo === id && deck.track?.bpm && follower.track?.bpm) {
+      const linkedRate =
+        (deck.track.bpm * effectiveDeckRate(deck)) / follower.track.bpm
+      if (linkedRate >= 0.84 && linkedRate <= 1.16) {
+        this.setParam(otherId, "rate", linkedRate)
+        this.state[otherId].syncTo = id
+      } else {
+        follower.syncTo = null
+        this.state.error = `Deck ${otherId} sync released: tempo exceeds ±16%.`
+      }
+    }
+  }
+  /** Tempo a deck is heading to: native while it glides back after a mix. */
+  plannedRate(id: DeckId) {
+    return this.tempoGlides[id] ? 1 : this.state[id].rate
+  }
+  /**
+   * After an automatic mix the incoming track keeps the outgoing tempo, so a
+   * set would drift by a few percent per track. Ease it back to its native
+   * tempo over ~32 bars instead. This never cancels a scheduled transition.
+   */
+  private startTempoReturn(id: DeckId) {
+    const deck = this.state[id]
+    if (!this.context || Math.abs(deck.rate - 1) < 0.002 || deck.syncTo) return
+    const beat = 60 / ((deck.track?.bpm ?? 120) * deck.rate)
+    this.tempoGlides[id] = {
+      from: deck.rate,
+      start: this.context.currentTime,
+      duration: Math.min(75, Math.max(15, 32 * 4 * beat)),
+    }
+  }
+  private advanceTempoGlides() {
+    let changed = false
+    for (const id of ["A", "B"] as DeckId[]) {
+      const glide = this.tempoGlides[id]
+      if (!glide || !this.context) continue
+      const progress = Math.min(
+        1,
+        Math.max(0, (this.context.currentTime - glide.start) / glide.duration)
+      )
+      const eased = progress * progress * (3 - 2 * progress)
+      this.applyRate(id, glide.from + (1 - glide.from) * eased)
+      if (progress >= 1) {
+        delete this.tempoGlides[id]
+        this.applyFX(id)
+      }
+      changed = true
+    }
+    return changed
+  }
+  /** Land a glide immediately, e.g. when the next mix is about to begin. */
+  private finishTempoReturn(id: DeckId) {
+    if (!this.tempoGlides[id]) return
+    delete this.tempoGlides[id]
+    this.applyRate(id, 1)
+    this.applyFX(id)
   }
   setCrossfade(value: number, manual = true) {
     if (manual) this.cancelAuto()
@@ -2356,7 +2412,7 @@ export class DJEngine {
       this.state[incoming].track,
       this.position(out),
       {
-        outRate: this.state[out].rate,
+        outRate: this.plannedRate(out),
         incomingRate: this.state[incoming].rate,
         outCue: now ? null : plan.anchors?.out,
         inCue: plan.anchors?.incoming,
@@ -2393,6 +2449,7 @@ export class DJEngine {
         },
       ])
     ) as NonNullable<typeof this.automation>["original"]
+    delete this.tempoGlides[incoming]
     this.setParam(incoming, "rate", eligible.incomingRate)
     this.pause(incoming)
     const duration = Math.min(plan.duration, eligible.duration)
@@ -2642,6 +2699,8 @@ export class DJEngine {
   }
   private async beginAutomation(auto: NonNullable<typeof this.automation>) {
     auto.preparing = true
+    // The plan assumed the outgoing deck at native tempo; land any glide now.
+    this.finishTempoReturn(auto.out)
     const ctx = this.context!
     await ctx.resume()
     if (this.automation !== auto) return
@@ -2759,7 +2818,7 @@ export class DJEngine {
   }
   private tick() {
     if (!this.context) return
-    let changed = !!this.automation
+    let changed = this.advanceTempoGlides() || !!this.automation
     for (const id of ["A", "B"] as DeckId[]) {
       const deck = this.state[id],
         ch = this.channels[id],
@@ -2812,6 +2871,7 @@ export class DJEngine {
         this.pause(auto.out)
         this.restoreAutomation(auto, false)
         this.state.autoStatus = "Transition complete"
+        this.startTempoReturn(auto.incoming)
         this.onTransition?.(auto.plan.id)
         this.onHandoff?.(auto.out, auto.incoming)
       }

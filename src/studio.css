@@ -1093,3 +1093,23 @@ html .app-shell .sidebar .sidebar-profile > div > * {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Fullscreen: the decks take the whole screen. Covers the app's fullscreen
+   button (data-fullscreen / :fullscreen) and browser or OS fullscreen
+   (display-mode), which the Fullscreen API does not report. */
+html:is([data-fullscreen], :fullscreen) .app-shell.app-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+html:is([data-fullscreen], :fullscreen)
+  .app-shell
+  :is(.sidebar, .sidebar-toggle) {
+  display: none;
+}
+@media (display-mode: fullscreen) {
+  html .app-shell.app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  html .app-shell :is(.sidebar, .sidebar-toggle) {
+    display: none;
+  }
+}

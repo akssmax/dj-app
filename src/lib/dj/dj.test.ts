@@ -1225,6 +1225,52 @@ describe("audio transport and automix lock", () => {
     expect(engine.saveSuggestedCue("A", 60, "EXIT")).toBeNull()
     expect(engine.state.A.cues).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
   })
+  it("eases the incoming deck back to native tempo after a mix without cancelling the next one", async () => {
+    await engine.load("A", analyzed)
+    await engine.load("B", incoming)
+    const plan = planTransitions(analyzed, incoming, 0, {
+      outCue: 4,
+      inCue: 90,
+    }).find((candidate) => candidate.id === "bass")!
+    await engine.startAuto("A", plan)
+    await vi.advanceTimersByTimeAsync(4200 + plan.duration * 1000 + 200)
+    expect(engine.state.auto).toBe(false)
+    expect(engine.state.B.playing).toBe(true)
+    // Matched to deck A's 128 BPM, but planned against native tempo.
+    expect(engine.state.B.rate).toBeLessThan(0.99)
+    expect(engine.plannedRate("B")).toBe(1)
+    // The next mix is scheduled while the glide runs and must stay scheduled.
+    const next = planTransitions(
+      engine.state.B.track!,
+      analyzed,
+      engine.state.B.position,
+      { outCue: 300 }
+    ).find((candidate) => candidate.id === "bass")!
+    await engine.load("A", analyzed)
+    await engine.startAuto("B", next)
+    expect(engine.state.auto).toBe(true)
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(engine.state.auto).toBe(true)
+    expect(engine.state.B.rate).toBeGreaterThan(128 / 130)
+    expect(engine.state.B.rate).toBeLessThan(1)
+    await vi.advanceTimersByTimeAsync(60000)
+    expect(engine.state.B.rate).toBeCloseTo(1, 5)
+    expect(engine.state.auto).toBe(true)
+  })
+  it("lets a manual tempo change take over from the tempo return", async () => {
+    await engine.load("A", analyzed)
+    await engine.load("B", incoming)
+    const plan = planTransitions(analyzed, incoming, 0, {
+      outCue: 4,
+      inCue: 90,
+    }).find((candidate) => candidate.id === "bass")!
+    await engine.startAuto("A", plan)
+    await vi.advanceTimersByTimeAsync(4200 + plan.duration * 1000 + 200)
+    engine.setParam("B", "rate", 1.02)
+    await vi.advanceTimersByTimeAsync(80000)
+    expect(engine.state.B.rate).toBe(1.02)
+    expect(engine.plannedRate("B")).toBe(1.02)
+  })
   it("executes an anchored transition from the chosen cues and refuses a passed exit", async () => {
     await engine.load("A", analyzed)
     await engine.load("B", incoming)

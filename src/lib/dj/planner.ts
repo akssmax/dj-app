@@ -293,6 +293,24 @@ export function sectionEnergy(track: Track, position: number, length: number) {
     : null
 }
 const energyAt = sectionEnergy
+
+/** End of the last 16-bar phrase that reaches ~75% of the track's loudest
+ * phrase: everything after it is outro. 0 when loudness is unknown. */
+export function lastLoudPhraseEnd(
+  track: Track,
+  offset: number,
+  phrase: number
+) {
+  if (!track.analysis?.energyCurve.length || phrase <= 0) return 0
+  const levels: [number, number][] = []
+  for (let t = offset; t < track.duration; t += phrase) {
+    const level = energyAt(track, t, Math.min(phrase, track.duration - t))
+    if (level !== null) levels.push([t, level])
+  }
+  const peak = Math.max(0, ...levels.map(([, level]) => level))
+  const last = levels.filter(([, level]) => level >= peak * 0.75).at(-1)
+  return last ? Math.min(track.duration, last[0] + phrase) : 0
+}
 export function planTransitions(
   out: Track,
   incoming: Track,
@@ -385,14 +403,19 @@ export function planTransitions(
           offset + Math.floor((latest - offset) / phrase) * phrase
         ),
         bestCost = Infinity
+      // Outro first: leave after the last high-energy phrase, so the mix
+      // never cuts a final drop and never exits on a mid-track breakdown.
+      const loudEnd = lastLoudPhraseEnd(out, offset, phrase)
       for (
         let t = offset + Math.ceil((earliest - offset) / phrase) * phrase;
         outCue === null && t <= latest;
         t += phrase
       ) {
+        const early = t < loudEnd ? 1 + ((loudEnd - t) / out.duration) * 3 : 0
         const cost =
-          (energyAt(out, t, Math.min(duration, phrase)) ?? 0.5) +
-          ((latest - t) / out.duration) * 0.2
+          early +
+          (energyAt(out, t, Math.min(duration, phrase)) ?? 0.5) * 0.35 +
+          ((latest - t) / out.duration) * 0.6
         if (cost < bestCost) {
           bestCost = cost
           outStart = t
@@ -565,7 +588,9 @@ export function planTransitions(
             outCue !== null
               ? "Uses your selected outgoing cue"
               : exitEnergy !== null
-                ? "Lower-energy late phrase chosen from measured loudness"
+                ? outStart >= lastLoudPhraseEnd(out, offset, phrase)
+                  ? "Exits in the outro, after the last high-energy phrase"
+                  : "No clear outro; exits as late as the routine allows"
                 : "Exit estimated on the 16-bar grid",
             genreFit
               ? `Technique suits ${out.genre} / ${incoming.genre}`

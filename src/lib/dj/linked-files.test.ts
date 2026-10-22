@@ -6,6 +6,9 @@ import {
   scanMusicFolder,
   folderCollections,
   filenameMetadata,
+  ignoredEntry,
+  reopenFolder,
+  sameFileTime,
 } from "./linked-files"
 import type { FileHandle, FolderHandle, LinkedFolder } from "./linked-files"
 import { recommendTracks } from "./library-scope"
@@ -175,5 +178,66 @@ describe("linked music folders", () => {
     vi.mocked(missing.getFile).mockRejectedValue(new Error("NotFoundError"))
     const tracks = await scanMusicFolder(folder([missing, file()]), [])
     expect(tracks).toHaveLength(1)
+  })
+
+  it("skips macOS AppleDouble files and drive housekeeping folders", async () => {
+    const tracks = await scanMusicFolder(
+      folder([
+        file("._song.mp3"),
+        file(".DS_Store"),
+        directory(".Trashes", [file("deleted.mp3")]),
+        directory("System Volume Information", [file("x.wav")]),
+        directory("House", [file(), file("._song.mp3")]),
+      ]),
+      []
+    )
+    expect(tracks.map((track) => track.linkedFile?.path)).toEqual([
+      "House/song.mp3",
+    ])
+    expect(ignoredEntry("$RECYCLE.BIN")).toBe(true)
+    expect(ignoredEntry("Songs")).toBe(false)
+  })
+  it("treats FAT timezone and daylight-saving shifts as the same file", async () => {
+    const hour = 60 * 60 * 1000
+    expect(sameFileTime(1000, 1000 + hour)).toBe(true)
+    expect(sameFileTime(1000, 1000 - 5.5 * hour)).toBe(true)
+    expect(sameFileTime(1000, 1000 + hour + 1500)).toBe(true)
+    expect(sameFileTime(1000, 1001)).toBe(false)
+    expect(sameFileTime(1000, 1000 + 37 * 60 * 1000)).toBe(false)
+    expect(sameFileTime(1000, 1000 + 15 * hour)).toBe(false)
+    // A clock change keeps the track, its cues and analysis without a rescan.
+    const handle = file("song.mp3", 10_000)
+    const original = await scanMusicFolder(folder([handle]), [])
+    original[0].bpm = 128
+    vi.mocked(handle.getFile).mockResolvedValue(
+      new File(["audio"], handle.name, { lastModified: 10_000 + hour })
+    )
+    expect(await readLinkedFile(original[0].linkedFile!)).toBeInstanceOf(File)
+    const rescanned = await scanMusicFolder(folder([handle]), original)
+    expect(rescanned[0].bpm).toBe(128)
+    // A real edit (different size) is still rejected.
+    vi.mocked(handle.getFile).mockResolvedValue(
+      new File(["longer audio"], handle.name, { lastModified: 10_000 + hour })
+    )
+    await expect(readLinkedFile(original[0].linkedFile!)).rejects.toThrow(
+      "changed"
+    )
+  })
+  it("re-requests access to a saved folder before asking to pick it again", async () => {
+    const saved = folder([file()])
+    saved.handle.requestPermission = vi.fn(async () => "granted" as const)
+    expect(await reopenFolder(saved)).toBe(true)
+    expect(saved.handle.requestPermission).toHaveBeenCalledWith({
+      mode: "read",
+    })
+    saved.handle.requestPermission = vi.fn(async () => "denied" as const)
+    expect(await reopenFolder(saved)).toBe(false)
+    saved.handle.requestPermission = vi.fn(async () => {
+      throw new DOMException("gone", "NotFoundError")
+    })
+    expect(await reopenFolder(saved)).toBe(false)
+    // Browsers without requestPermission fall back to the current state.
+    const legacy = folder([file()])
+    expect(await reopenFolder(legacy)).toBe(true)
   })
 })

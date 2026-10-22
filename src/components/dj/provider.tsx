@@ -1,6 +1,7 @@
 import {
   folderAccessSupported,
   pickMusicFolder,
+  reopenFolder,
   scanMusicFolder,
   checkLinkedTracks,
   folderCollections,
@@ -424,8 +425,13 @@ export function DJProvider({ children }: { children: ReactNode }) {
       (folder) => folder.id === id
     )
     try {
+      // Reconnect and rescan first re-request access to the saved folder (one
+      // "Allow" click); only a lost or refused handle opens the picker again.
+      const reopened = existing ? await reopenFolder(existing) : false
       const handle =
-        rescan && existing ? existing.handle : await pickMusicFolder()
+        existing && (reopened || rescan)
+          ? existing.handle
+          : await pickMusicFolder()
       if (existing && !rescan && handle.name !== existing.name)
         throw new Error(
           `Reconnect needs the original ${existing.name} folder. Use Connect music folder to add ${handle.name} separately.`
@@ -473,6 +479,24 @@ export function DJProvider({ children }: { children: ReactNode }) {
       )
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") return
+      // A saved handle to an unplugged drive fails here, not at permission.
+      const missing =
+        error instanceof Error &&
+        (error.name === "NotFoundError" || error.name === "NotReadableError")
+      if (missing && existing) {
+        update((db) => ({
+          ...db,
+          tracks: db.tracks.map((track) =>
+            track.linkedFile?.folderId === existing.id
+              ? { ...track, available: false }
+              : track
+          ),
+        }))
+        notify(
+          `${existing.name} isn't connected. Plug in the drive, then press Reconnect.`
+        )
+        return
+      }
       if (rescan && existing)
         update((db) => ({
           ...db,

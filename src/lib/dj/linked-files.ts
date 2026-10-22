@@ -7,14 +7,65 @@ export interface FileHandle {
   getFile: () => Promise<File>
   queryPermission: (options: { mode: "read" }) => Promise<PermissionState>
 }
+type PermissionRequest = (options: { mode: "read" }) => Promise<PermissionState>
 export interface FolderHandle {
   kind: "directory"
   name: string
   isSameEntry?: (other: FolderHandle) => Promise<boolean>
   entries: () => AsyncIterableIterator<[string, FileHandle | FolderHandle]>
   queryPermission: (options: { mode: "read" }) => Promise<PermissionState>
+  requestPermission?: PermissionRequest
 }
 export type LinkedFolder = { id: string; name: string; handle: FolderHandle }
+
+/** Names a USB scan must ignore: macOS AppleDouble files ("._song.mp3") and
+ * other dot-files, plus OS housekeeping folders on FAT/exFAT/NTFS drives. */
+export function ignoredEntry(name: string) {
+  return (
+    name.startsWith(".") ||
+    /^(System Volume Information|\$RECYCLE\.BIN|RECYCLER|Thumbs\.db|desktop\.ini)$/i.test(
+      name
+    )
+  )
+}
+
+/**
+ * FAT and exFAT drives store local time, so after a timezone or daylight-saving
+ * change every file reads as shifted by whole hours (or 15-minute zones).
+ * A non-zero shift of that shape, within FAT's 2 s rounding, is the same file.
+ */
+export function sameFileTime(a: number, b: number) {
+  const shift = Math.abs(a - b)
+  if (shift === 0) return true
+  const zone = 15 * 60 * 1000,
+    zones = Math.round(shift / zone)
+  return (
+    zones >= 1 &&
+    shift <= 14 * 60 * 60 * 1000 &&
+    Math.abs(shift - zones * zone) <= 2000
+  )
+}
+const sameFile = (
+  file: File,
+  link: Pick<LinkedFile, "size" | "lastModified">
+) =>
+  file.size === link.size && sameFileTime(file.lastModified, link.lastModified)
+
+/**
+ * Saved folder handles survive restarts and replugs; usually only the
+ * permission lapsed. Ask for it again (one "Allow" click) before falling back
+ * to the folder picker. Must run inside the user's click.
+ */
+export async function reopenFolder(folder: LinkedFolder) {
+  try {
+    const state = folder.handle.requestPermission
+      ? await folder.handle.requestPermission({ mode: "read" })
+      : await folder.handle.queryPermission({ mode: "read" })
+    return state === "granted"
+  } catch {
+    return false
+  }
+}
 
 export function filenameMetadata(name: string) {
   const stem = name.replace(/\.[^.]+$/, "")
@@ -85,7 +136,7 @@ export async function readLinkedFile(link: LinkedFile) {
       "Folder access needs permission. Use Reconnect folder in the library."
     )
   const file = await link.handle.getFile()
-  if (file.size !== link.size || file.lastModified !== link.lastModified)
+  if (!sameFile(file, link))
     throw new Error("This file changed. Rescan its folder before loading it.")
   return file
 }
@@ -129,6 +180,7 @@ export async function scanMusicFolder(folder: LinkedFolder, previous: Track[]) {
   )
   const walk = async (directory: FolderHandle, prefix = "") => {
     for await (const [name, handle] of directory.entries()) {
+      if (ignoredEntry(name)) continue
       const path = prefix + name
       if (handle.kind === "directory") {
         await walk(handle, path + "/")
@@ -150,10 +202,7 @@ export async function scanMusicFolder(folder: LinkedFolder, previous: Track[]) {
         size: file.size,
         lastModified: file.lastModified,
       }
-      if (
-        existing?.linkedFile?.size === file.size &&
-        existing.linkedFile.lastModified === file.lastModified
-      ) {
+      if (existing?.linkedFile && sameFile(file, existing.linkedFile)) {
         const fallback = filenameMetadata(name)
         found.push({
           ...existing,

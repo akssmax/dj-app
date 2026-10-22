@@ -17,7 +17,27 @@ type RecommendationOptions = {
   technique?: string | null
   transitionCues?: LibraryDatabase["session"]["transitionCues"]
   played?: ReadonlySet<string>
+  /** Score how well each candidate leads into the rest of the pool. */
+  lookahead?: boolean
 }
+
+/**
+ * Cheap pair fit (no transition planning) used to look one track ahead:
+ * tempo within a beatmatch range, compatible keys, and energy moving the
+ * way the mix intent asks.
+ */
+export function followFit(from: Track, to: Track, intent: MixIntent) {
+  const gap = from.bpm && to.bpm ? Math.abs(to.bpm / from.bpm - 1) * 100 : 6
+  const tempo = gap <= 3 ? 10 : gap <= 8 ? 10 - (gap - 3) * 1.6 : -6
+  const key = (harmonicCompatibility(from.camelot, to.camelot) - 0.5) * 16
+  const target = intent === "lift" ? 1 : intent === "ease" ? -1 : 0
+  const energy =
+    6 -
+    Math.min(6, Math.abs((to.energy ?? 5) - (from.energy ?? 5) - target) * 2)
+  return tempo + key + energy
+}
+const sameArtist = (a: Track, b: Track) =>
+  a.artist === b.artist && !/^unknown/i.test(a.artist)
 
 export function scopedTracks(
   tracks: Track[],
@@ -110,7 +130,8 @@ export function recommendTracks(
         (out.camelot && track.camelot ? (harmonic - 0.5) * 12 : -3) -
         (gap === null ? 6 : Math.min(8, gap / 4)) -
         (!track.analysis ? 4 : 0) +
-        (relation && !plan.beatmatch ? 3 : 0)
+        (relation && !plan.beatmatch ? 3 : 0) -
+        (sameArtist(out, track) ? 6 : 0)
       return [
         {
           track,
@@ -120,6 +141,26 @@ export function recommendTracks(
           reason: `${gap === null ? "Tempo unverified" : plan.beatmatch ? `${gap.toFixed(1)} BPM gap · beatmatch fits` : `${gap.toFixed(1)} BPM gap · ${plan.name}`}${relation ? " · half/double-time relationship (manual counting)" : ""}${out.camelot && track.camelot ? ` · ${harmonic >= 0.8 ? "compatible source keys" : "favor less melody overlap"}` : " · key unverified"} · ${delta > 1 ? "energy rises" : delta < -1 ? "energy eases" : "similar energy"}`,
         },
       ]
+    })
+    .sort(
+      (a, b) => b.score - a.score || a.track.title.localeCompare(b.track.title)
+    )
+    .map((recommendation, index, ranked) => {
+      // Lookahead: among the strongest picks, prefer the one that leaves a
+      // good next move instead of painting the set into a corner.
+      if (!options.lookahead || index >= 6) return recommendation
+      const rest = ranked
+        .filter((other) => other.track.id !== recommendation.track.id)
+        .map((other) => other.track)
+      if (!rest.length) return recommendation
+      const best = Math.max(
+        ...rest.map((next) => followFit(recommendation.track, next, intent))
+      )
+      return {
+        ...recommendation,
+        score: recommendation.score + best * 0.4,
+        reason: `${recommendation.reason} · ${best >= 14 ? "strong" : best >= 6 ? "workable" : "few"} follow-ups`,
+      }
     })
     .sort(
       (a, b) => b.score - a.score || a.track.title.localeCompare(b.track.title)
