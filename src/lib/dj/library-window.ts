@@ -1,5 +1,5 @@
-export const LIBRARY_ROW_HEIGHT = 76
-export const LIBRARY_HEADER_HEIGHT = 56
+export const LIBRARY_ROW_HEIGHT = 52
+export const LIBRARY_HEADER_HEIGHT = 40
 
 /** Keep the scroll height stable while mounting just the viewport and its buffer. */
 export function libraryWindow(

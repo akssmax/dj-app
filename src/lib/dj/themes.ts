@@ -24,6 +24,18 @@ export const themes = [
     swatches: ["#120f1d", "#b7a4ff", "#ff8fc2"],
   },
   {
+    id: "neon",
+    name: "Neon Club",
+    description: "Pitch-black booth · magenta + cyan decks",
+    swatches: ["#09090d", "#ff4fd8", "#2ee6ff"],
+  },
+  {
+    id: "sunset",
+    name: "Sunset Lounge",
+    description: "Warm dusk surfaces · coral + gold decks",
+    swatches: ["#15100e", "#ff8a65", "#ffd166"],
+  },
+  {
     id: "daylight",
     name: "Daylight",
     description: "Bright paper surfaces · teal + rust decks",

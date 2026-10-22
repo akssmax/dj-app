@@ -1262,6 +1262,13 @@ export class DJEngine {
         )
     }
   }
+  /** Output device of the headphone (cue) bus, if one is connected. */
+  monitorSinkId() {
+    return this.state.controller.monitorConnected
+      ? ((this.monitorAudio as unknown as { sinkId?: string } | undefined)
+          ?.sinkId ?? null)
+      : null
+  }
   async setMonitorOutput(deviceId: string | null) {
     if (this.outputPairs) this.setOutputPairs(false)
     const version = ++this.monitorVersion

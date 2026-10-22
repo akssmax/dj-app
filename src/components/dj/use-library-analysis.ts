@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   analyzeLibraryTrack,
+  libraryAnalyzable,
   linkedFingerprint,
   mergeLibraryAnalysis,
 } from "@/lib/dj/library-analysis"
@@ -29,8 +30,7 @@ export function useLibraryAnalysis(
     if (!ready || job.current) return
     const next = tracks.find(
       (t) =>
-        t.linkedFile &&
-        t.available !== false &&
+        libraryAnalyzable(t) &&
         !t.analysis &&
         !attempted.current.has(linkedFingerprint(t))
     )

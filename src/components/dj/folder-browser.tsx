@@ -4,7 +4,16 @@ import { Icon } from "./icons"
 import { useDJ } from "./provider"
 
 export function FolderBrowser() {
-  const { database, tracks, libraryTab, setLibraryTab } = useDJ()
+  const {
+    database,
+    tracks,
+    libraryTab,
+    setLibraryTab,
+    linkMusicFolder,
+    folderLinkSupported,
+    scanningFolder,
+    ready,
+  } = useDJ()
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const toggle = (id: string) =>
     setCollapsed((prior) => {
@@ -30,6 +39,7 @@ export function FolderBrowser() {
           ["local", "On this device", "folder"],
           ["favorites", "Favorites", "heart"],
           ["queue", "Automix queue", "music"],
+          ["history", "Recently played", "activity"],
         ] as const
       ).map(([id, label, icon]) => (
         <Button
@@ -41,13 +51,31 @@ export function FolderBrowser() {
           <Icon name={icon} size={16} />
           <span>{label}</span>
           {id === "queue" && <small>{database.queue.length}</small>}
+          {id === "history" && database.history.length > 0 && (
+            <small>
+              {new Set(database.history.map((e) => e.trackId)).size}
+            </small>
+          )}
         </Button>
       ))}
       <p className="folder-browser-label">MUSIC FOLDERS</p>
       {!database.linkedFolders.length && (
-        <p className="muted folder-empty">
-          Connect your music folder to browse its albums and subfolders here.
-        </p>
+        <div className="folder-empty">
+          <Icon name="usb" size={22} />
+          <strong>Link a USB drive or music folder</strong>
+          <p>
+            Browse its folders here. Audio stays on the drive; nothing is
+            copied.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!ready || !folderLinkSupported || scanningFolder !== null}
+            onClick={() => void linkMusicFolder()}
+          >
+            Connect folder
+          </Button>
+        </div>
       )}
       {database.linkedFolders.map((folder) => {
         const collections = database.collections.filter(
@@ -107,6 +135,25 @@ export function FolderBrowser() {
         }
         return renderFolder("", 0)
       })}
+      {database.collections.some((c) => c.kind === "smart") && (
+        <p className="folder-browser-label">SMART CRATES</p>
+      )}
+      {database.collections
+        .filter((c) => c.kind === "smart")
+        .map((c) => (
+          <Button
+            key={c.id}
+            variant="ghost"
+            title={`Rule: ${c.query}`}
+            aria-current={
+              libraryTab === `collection:${c.id}` ? "page" : undefined
+            }
+            onClick={() => setLibraryTab(`collection:${c.id}`)}
+          >
+            <Icon name="sparkles" size={15} />
+            <span>{c.name}</span>
+          </Button>
+        ))}
       {database.collections.some((c) => c.kind === "playlist") && (
         <p className="folder-browser-label">PLAYLISTS</p>
       )}

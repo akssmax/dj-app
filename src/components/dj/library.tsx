@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   libraryWindow,
   LIBRARY_HEADER_HEIGHT,
@@ -30,12 +30,31 @@ import { Artwork } from "./waveform"
 import { FolderBrowser } from "./folder-browser"
 import { Icon } from "./icons"
 import { formatTime } from "@/lib/dj/tracks"
+import { effectiveDeckRate, outgoingDeck } from "@/lib/dj/engine"
+import { mixFit, sortTracks, TRACK_DRAG_TYPE } from "@/lib/dj/mix-fit"
+import type { MixFit, SortKey, SortState } from "@/lib/dj/mix-fit"
+import { waveColumns } from "@/lib/dj/wave-peaks"
+import { drawWave, fitCanvas, readPalette } from "./wave-canvas"
 import {
   Dialog,
   DialogContent,
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  hasQueryFields,
+  lastPlayedMap,
+  parseLibraryQuery,
+  setlistText,
+} from "@/lib/dj/library-query"
+import { libraryAnalyzable } from "@/lib/dj/library-analysis"
+import { readLinkedFile } from "@/lib/dj/linked-files"
 
 export function ImportButton({
   compact = false,
@@ -75,6 +94,131 @@ export function ImportButton({
   )
 }
 
+const AUDIO_ACCEPT = "audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac,.aiff,.opus"
+
+/** One "Add music" menu for importing files or a folder as offline copies.
+ * The file inputs live outside the menu so they survive it closing. */
+function AddMusicMenu() {
+  const files = useRef<HTMLInputElement>(null),
+    folder = useRef<HTMLInputElement>(null),
+    { importFiles, importing } = useDJ()
+  const input = (ref: typeof files, directory: boolean) => (
+    <Input
+      ref={ref}
+      className="hidden"
+      tabIndex={-1}
+      type="file"
+      multiple
+      {...(directory ? { webkitdirectory: "", directory: "" } : {})}
+      accept={AUDIO_ACCEPT}
+      aria-label={
+        directory ? "Choose music folder" : "Choose local music files"
+      }
+      onChange={(event) => {
+        if (event.target.files) void importFiles(event.target.files)
+        event.target.value = ""
+      }}
+    />
+  )
+  return (
+    <>
+      {input(files, false)}
+      {input(folder, true)}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={<Button variant="outline" size="sm" disabled={importing} />}
+        >
+          <Icon name="upload" size={15} />
+          {importing ? "Importing…" : "Add music"}
+          <Icon name="down" size={12} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="min-w-56">
+          <DropdownMenuItem onClick={() => files.current?.click()}>
+            Import tracks · offline copy
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => folder.current?.click()}>
+            Import folder · offline copy
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
+  )
+}
+
+/** Short "played …" label from a timestamp. */
+function playedLabel(time: number | undefined, now: number) {
+  if (time === undefined) return null
+  const days = Math.floor((now - time) / 86_400_000)
+  return days < 1
+    ? "played today"
+    : days === 1
+      ? "played yesterday"
+      : `played ${days}d ago`
+}
+
+/**
+ * Plays a short preview of a track, on the headphone output when one is
+ * connected, without touching the decks.
+ */
+function usePreview(
+  sinkId: () => string | null,
+  notify: (message: string) => void
+) {
+  const [playingId, setPlayingId] = useState<string | null>(null)
+  const audio = useRef<HTMLAudioElement | null>(null),
+    objectUrl = useRef<string | null>(null)
+  const stop = useCallback(() => {
+    audio.current?.pause()
+    audio.current = null
+    if (objectUrl.current) URL.revokeObjectURL(objectUrl.current)
+    objectUrl.current = null
+    setPlayingId(null)
+  }, [])
+  useEffect(() => stop, [stop])
+  const toggle = useCallback(
+    async (track: Track) => {
+      if (playingId === track.id) return stop()
+      stop()
+      try {
+        let url = track.url
+        if (track.linkedFile || track.file) {
+          const blob = track.linkedFile
+            ? await readLinkedFile(track.linkedFile)
+            : track.file!
+          url = objectUrl.current = URL.createObjectURL(blob)
+        }
+        const player = new Audio(url)
+        audio.current = player
+        player.volume = 0.8
+        const sink = sinkId()
+        const setSink = (
+          player as unknown as { setSinkId?: (id: string) => Promise<void> }
+        ).setSinkId
+        if (sink && setSink) await setSink.call(player, sink)
+        // Start a third in, past most intros, and stop after 30 seconds.
+        player.addEventListener(
+          "loadedmetadata",
+          () => {
+            player.currentTime = Math.max(0, player.duration * 0.33)
+          },
+          { once: true }
+        )
+        player.addEventListener("timeupdate", () => {
+          if (player.currentTime > player.duration * 0.33 + 30) stop()
+        })
+        player.addEventListener("ended", stop, { once: true })
+        setPlayingId(track.id)
+        await player.play()
+      } catch (error) {
+        stop()
+        notify(error instanceof Error ? error.message : "Preview unavailable.")
+      }
+    },
+    [playingId, sinkId, stop, notify]
+  )
+  return { playingId, toggle, stop }
+}
+
 export function Library() {
   const {
       tracks,
@@ -94,6 +238,10 @@ export function Library() {
       libraryGenre: genre,
       setLibraryGenre: setGenre,
       createPlaylist,
+      createSmartCrate,
+      addToPlaylist,
+      engine,
+      notify,
       folderLinkSupported,
       scanningFolder,
       linkMusicFolder,
@@ -104,9 +252,57 @@ export function Library() {
     loaded = useEngine((state) => ({
       A: state.A.track?.id,
       B: state.B.track?.id,
-    }))
-  const [sort, setSort] = useState(false),
-    [dragging, setDragging] = useState(false)
+    })),
+    // Mix fit is measured against the deck you are mixing out of.
+    reference = useEngine((state) => {
+      const id = outgoingDeck(state)
+      return {
+        id,
+        track: state[id].track,
+        rate: effectiveDeckRate(state[id]),
+      }
+    })
+  const [sort, setSort] = useState<SortState>(null),
+    [mixableOnly, setMixableOnly] = useState(false),
+    [dragging, setDragging] = useState(false),
+    [selection, setSelection] = useState<Set<string>>(new Set()),
+    [saveAsSmart, setSaveAsSmart] = useState(false)
+  const preview = usePreview(
+    useCallback(() => engine?.monitorSinkId() ?? null, [engine]),
+    notify
+  )
+  const lastPlayed = useMemo(
+    () => lastPlayedMap(database.history),
+    [database.history]
+  )
+  const now = Date.now()
+  const searchHasFields = hasQueryFields(parseLibraryQuery(search))
+  const toggleSelected = useCallback(
+    (id: string) =>
+      setSelection((current) => {
+        const next = new Set(current)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      }),
+    []
+  )
+  useEffect(() => setSelection(new Set()), [libraryTab])
+  const fitFor = useCallback(
+    (track: Track) =>
+      reference.track && track.id !== reference.track.id
+        ? mixFit(reference.track, reference.rate, track)
+        : null,
+    [reference.track, reference.rate]
+  )
+  const toggleSort = (key: SortKey) =>
+    setSort((current) =>
+      current?.key !== key
+        ? { key, direction: key === "fit" || key === "energy" ? -1 : 1 }
+        : current.direction === (key === "fit" || key === "energy" ? -1 : 1)
+          ? { key, direction: current.direction === 1 ? -1 : 1 }
+          : null
+    )
   const [playlistOpen, setPlaylistOpen] = useState(false),
     [playlistName, setPlaylistName] = useState("")
   const favoriteIds = useMemo(
@@ -115,13 +311,33 @@ export function Library() {
   )
   const queueIds = useMemo(() => new Set(database.queue), [database.queue])
   const filtered = useMemo(() => {
-    const result = [...scopeTracks]
+    let result = [...scopeTracks]
     if (libraryTab === "queue") {
       const order = new Map(database.queue.map((id, index) => [id, index]))
       result.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
-    } else if (sort) result.sort((a, b) => (a.bpm ?? 0) - (b.bpm ?? 0))
-    return result
-  }, [scopeTracks, libraryTab, database.queue, sort])
+    } else if (libraryTab === "history")
+      result.sort(
+        (a, b) => (lastPlayed.get(b.id) ?? 0) - (lastPlayed.get(a.id) ?? 0)
+      )
+    if (mixableOnly)
+      result = result.filter((track) => {
+        const fit = fitFor(track)
+        return !fit || fit.overall === "good" || fit.overall === "ok"
+      })
+    return sortTracks(result, sort, {
+      energy: database.energyRatings,
+      fit: fitFor,
+    })
+  }, [
+    scopeTracks,
+    libraryTab,
+    database.queue,
+    database.energyRatings,
+    lastPlayed,
+    sort,
+    mixableOnly,
+    fitFor,
+  ])
   const viewport = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportHeight, setViewportHeight] = useState(480)
@@ -138,7 +354,7 @@ export function Library() {
   useEffect(() => {
     if (viewport.current) viewport.current.scrollTop = 0
     setScrollTop(0)
-  }, [libraryTab, search, genre, sort])
+  }, [libraryTab, search, genre, sort, mixableOnly])
   const previousSelection = useRef(selectedTrack)
   useEffect(() => {
     if (previousSelection.current === selectedTrack) return
@@ -166,6 +382,8 @@ export function Library() {
     <Card
       className={`library-panel ${dragging ? "is-dragging" : ""}`}
       onDragOver={(e) => {
+        // Rows dragged toward a deck are not file imports.
+        if (!e.dataTransfer.types.includes("Files")) return
         e.preventDefault()
         setDragging(true)
       }}
@@ -184,20 +402,25 @@ export function Library() {
         </div>
         <div className="library-import-actions">
           <Button
-            variant="outline"
+            size="sm"
             disabled={!ready || !folderLinkSupported || scanningFolder !== null}
             onClick={() => void linkMusicFolder()}
+            title="Link a USB drive or folder. Audio stays where it is."
           >
+            <Icon name="usb" size={15} />
             Connect folder
           </Button>
-          <ImportButton compact />
-          <ImportButton compact folder />
+          <AddMusicMenu />
           <Button
             variant="outline"
-            onClick={() => setPlaylistOpen(true)}
+            size="sm"
+            onClick={() => {
+              setSaveAsSmart(searchHasFields)
+              setPlaylistOpen(true)
+            }}
             disabled={!filtered.length}
           >
-            Save playlist
+            Save view
           </Button>
         </div>
       </div>
@@ -257,7 +480,8 @@ export function Library() {
             <div className="search-field">
               <Icon name="search" size={16} />
               <Input
-                placeholder="Search tracks or artists…"
+                placeholder="Search… try bpm:120-128 key:8A~ energy:4+"
+                title="Fields: bpm:128, bpm:120-128, key:8A, key:8A~ (compatible), genre:house, artist:name, energy:4+, fresh:30 (not played in 30 days)"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 aria-label="Search library"
@@ -283,7 +507,109 @@ export function Library() {
                 )}
               </SelectContent>
             </Select>
+            {reference.track && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mixable-toggle"
+                aria-pressed={mixableOnly}
+                title={`Show tracks that mix easily out of deck ${reference.id}: tempo within 8% and compatible keys`}
+                onClick={() => setMixableOnly(!mixableOnly)}
+              >
+                <span className="fit-dot" data-fit="good" />
+                Mixes with {reference.id}
+                <span className="mixable-reference">
+                  {reference.track.bpm
+                    ? `${(reference.track.bpm * reference.rate).toFixed(1)}`
+                    : "—"}
+                  {reference.track.camelot
+                    ? ` · ${reference.track.camelot}`
+                    : ""}
+                </span>
+              </Button>
+            )}
           </div>
+          {selection.size > 0 && (
+            <div
+              className="selection-bar"
+              role="toolbar"
+              aria-label="Selected tracks"
+            >
+              <strong>{selection.size} selected</strong>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => {
+                  for (const id of selection) if (!queueIds.has(id)) enqueue(id)
+                }}
+              >
+                Add to queue
+              </Button>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => {
+                  for (const id of selection)
+                    if (!favoriteIds.has(id)) favorite(id)
+                }}
+              >
+                Favorite
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={<Button size="xs" variant="outline" />}
+                >
+                  Add to playlist <Icon name="down" size={11} />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="min-w-48">
+                  {database.collections
+                    .filter((c) => c.kind === "playlist")
+                    .map((c) => (
+                      <DropdownMenuItem
+                        key={c.id}
+                        onClick={() => addToPlaylist(c.id, [...selection])}
+                      >
+                        {c.name}
+                      </DropdownMenuItem>
+                    ))}
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setSaveAsSmart(false)
+                      setPlaylistOpen(true)
+                    }}
+                  >
+                    New playlist from selection…
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <span
+                className="selection-rate"
+                aria-label="Rate selected energy"
+              >
+                {([1, 2, 3, 4, 5] as const).map((level) => (
+                  <Button
+                    key={level}
+                    size="xs"
+                    variant="ghost"
+                    aria-label={`Rate selected tracks energy ${level}`}
+                    onClick={() => {
+                      for (const id of selection) setEnergyRating(id, level)
+                    }}
+                  >
+                    {level}
+                  </Button>
+                ))}
+              </span>
+              <Button
+                size="xs"
+                variant="ghost"
+                className="selection-clear"
+                onClick={() => setSelection(new Set())}
+              >
+                Clear
+              </Button>
+            </div>
+          )}
           <div className="track-table-panel">
             <Table
               aria-rowcount={filtered.length + 1}
@@ -299,34 +625,75 @@ export function Library() {
             >
               <TableHeader>
                 <TableRow>
-                  <TableHead className="number-cell">#</TableHead>
+                  <TableHead className="number-cell">
+                    <SortHead
+                      label="FIT"
+                      sortKey="fit"
+                      sort={sort}
+                      onSort={toggleSort}
+                      disabled={!reference.track}
+                    />
+                  </TableHead>
                   <TableHead className="track-name-cell">
-                    TRACK / ARTIST
+                    <SortHead
+                      label="TRACK"
+                      sortKey="title"
+                      sort={sort}
+                      onSort={toggleSort}
+                    />
+                    <span className="sort-divider">/</span>
+                    <SortHead
+                      label="ARTIST"
+                      sortKey="artist"
+                      sort={sort}
+                      onSort={toggleSort}
+                    />
                   </TableHead>
-                  <TableHead className="load-cell">LOAD TO</TableHead>
+                  <TableHead className="load-cell">LOAD</TableHead>
                   <TableHead className="bpm-cell">
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      className="table-sort"
-                      onClick={() => setSort(!sort)}
-                    >
-                      BPM
-                      <Icon name="down" size={11} />
-                    </Button>
+                    <SortHead
+                      label="BPM"
+                      sortKey="bpm"
+                      sort={sort}
+                      onSort={toggleSort}
+                    />
                   </TableHead>
-                  <TableHead>
-                    KEY <span className="table-estimate">EST.</span>
+                  <TableHead className="key-cell">
+                    <SortHead
+                      label="KEY"
+                      sortKey="key"
+                      sort={sort}
+                      onSort={toggleSort}
+                    />
                   </TableHead>
-                  <TableHead className="genre-cell">GENRE</TableHead>
-                  <TableHead>TIME</TableHead>
                   <TableHead className="waveform-cell">WAVEFORM</TableHead>
-                  <TableHead />
+                  <TableHead className="genre-cell">
+                    <SortHead
+                      label="GENRE"
+                      sortKey="genre"
+                      sort={sort}
+                      onSort={toggleSort}
+                    />
+                  </TableHead>
+                  <TableHead className="time-cell">
+                    <SortHead
+                      label="TIME"
+                      sortKey="time"
+                      sort={sort}
+                      onSort={toggleSort}
+                    />
+                  </TableHead>
+                  <TableHead className="actions-cell" />
                   <TableHead
                     className="energy-cell"
                     title="Your energy rating: 1 star is low, 5 stars is high. Click the selected star again to clear."
                   >
-                    ENERGY
+                    <SortHead
+                      label="ENERGY"
+                      sortKey="energy"
+                      sort={sort}
+                      onSort={toggleSort}
+                    />
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -355,6 +722,12 @@ export function Library() {
                     enqueue={enqueue}
                     setEnergyRating={setEnergyRating}
                     retry={libraryAnalysis.retry}
+                    fit={fitFor(track)}
+                    checked={selection.has(track.id)}
+                    toggleChecked={toggleSelected}
+                    played={playedLabel(lastPlayed.get(track.id), now)}
+                    previewing={preview.playingId === track.id}
+                    togglePreview={preview.toggle}
                   />
                 ))}
                 {range.after > 0 && (
@@ -395,35 +768,86 @@ export function Library() {
           {formatTime(filtered.reduce((sum, track) => sum + track.duration, 0))}{" "}
           total
         </span>
-        <span>
-          Drop files to import <Icon name="upload" size={12} />
-        </span>
+        {libraryTab === "history" && database.history.length > 0 ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => {
+              const text = setlistText(database.history, tracks)
+              const link = document.createElement("a")
+              link.href = URL.createObjectURL(
+                new Blob([text], { type: "text/plain" })
+              )
+              link.download = `cue-setlist-${new Date().toISOString().slice(0, 10)}.txt`
+              link.click()
+              URL.revokeObjectURL(link.href)
+            }}
+          >
+            <Icon name="download" size={12} /> Export setlist
+          </Button>
+        ) : (
+          <span>
+            Drop files to import <Icon name="upload" size={12} />
+          </span>
+        )}
       </div>
       <Dialog open={playlistOpen} onOpenChange={setPlaylistOpen}>
         <DialogContent>
-          <DialogTitle>Save this view as a playlist</DialogTitle>
+          <DialogTitle>
+            {saveAsSmart ? "Save as a smart crate" : "Save as a playlist"}
+          </DialogTitle>
           <DialogDescription>
-            Include the {filtered.length} tracks currently visible in{" "}
-            {scopeLabel}. Your filters define the playlist.
+            {saveAsSmart
+              ? `A smart crate keeps the rule “${search.trim()}” and updates as your library changes.`
+              : selection.size
+                ? `Save the ${selection.size} selected tracks as a playlist.`
+                : `Include the ${filtered.length} tracks currently visible in ${scopeLabel}.`}
           </DialogDescription>
+          {searchHasFields && !selection.size && (
+            <div className="save-kind" role="radiogroup" aria-label="Save as">
+              <Button
+                size="sm"
+                variant="outline"
+                role="radio"
+                aria-checked={saveAsSmart}
+                onClick={() => setSaveAsSmart(true)}
+              >
+                Smart crate · keeps updating
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                role="radio"
+                aria-checked={!saveAsSmart}
+                onClick={() => setSaveAsSmart(false)}
+              >
+                Playlist · these {filtered.length} tracks
+              </Button>
+            </div>
+          )}
           <Input
-            aria-label="Playlist name"
-            placeholder="Playlist name"
+            aria-label={saveAsSmart ? "Crate name" : "Playlist name"}
+            placeholder={saveAsSmart ? "Crate name" : "Playlist name"}
             value={playlistName}
             onChange={(event) => setPlaylistName(event.target.value)}
           />
           <Button
             disabled={!playlistName.trim() || !filtered.length}
             onClick={() => {
-              createPlaylist(
-                playlistName,
-                filtered.map((track) => track.id)
-              )
+              if (saveAsSmart) createSmartCrate(playlistName, search.trim())
+              else
+                createPlaylist(
+                  playlistName,
+                  selection.size
+                    ? [...selection]
+                    : filtered.map((track) => track.id)
+                )
               setPlaylistOpen(false)
               setPlaylistName("")
+              setSelection(new Set())
             }}
           >
-            Save playlist
+            {saveAsSmart ? "Save crate" : "Save playlist"}
           </Button>
         </DialogContent>
       </Dialog>
@@ -448,6 +872,12 @@ type TrackRowProps = {
   enqueue: DJContextValue["enqueue"]
   setEnergyRating: DJContextValue["setEnergyRating"]
   retry: DJContextValue["libraryAnalysis"]["retry"]
+  fit: MixFit | null
+  checked: boolean
+  toggleChecked: (id: string) => void
+  played: string | null
+  previewing: boolean
+  togglePreview: (track: Track) => void
 }
 const LibraryTrackRow = memo(function TrackRowView({
   track,
@@ -466,20 +896,45 @@ const LibraryTrackRow = memo(function TrackRowView({
   enqueue,
   setEnergyRating,
   retry,
+  fit,
+  checked,
+  toggleChecked,
+  played,
+  previewing,
+  togglePreview,
 }: TrackRowProps) {
+  const draggable = track.available !== false
   return (
     <TableRow
       key={track.id}
       aria-rowindex={index + 2}
-      className={`${selected ? "midi-selected" : ""} ${
+      data-fit={fit?.overall}
+      draggable={draggable}
+      onDragStart={(event) => {
+        event.dataTransfer.setData(TRACK_DRAG_TYPE, track.id)
+        event.dataTransfer.effectAllowed = "copy"
+      }}
+      aria-selected={checked}
+      className={`${selected ? "midi-selected" : ""} ${checked ? "is-checked" : ""} ${
         loadedA ? "track-loaded-a" : loadedB ? "track-loaded-b" : ""
       }`}
     >
       <TableCell className="number-cell">
+        <input
+          type="checkbox"
+          className="row-check"
+          checked={checked}
+          onChange={() => toggleChecked(track.id)}
+          aria-label={`Select ${track.title}`}
+        />
         {loadedA || loadedB ? (
           <Icon name="music" size={14} />
         ) : (
-          String(index + 1).padStart(2, "0")
+          <span
+            className="fit-dot"
+            data-fit={fit?.overall ?? "unknown"}
+            title={fitTitle(fit)}
+          />
         )}
       </TableCell>
       <TableCell className="track-name-cell">
@@ -489,7 +944,10 @@ const LibraryTrackRow = memo(function TrackRowView({
             <strong title={track.linkedFile?.path ?? track.title}>
               {track.title}
             </strong>
-            <span>{track.artist}</span>
+            <span>
+              {track.artist}
+              {played && <em className="played-label"> · {played}</em>}
+            </span>
           </div>
         </div>
         {track.available === false && (
@@ -522,17 +980,26 @@ const LibraryTrackRow = memo(function TrackRowView({
           </Button>
         </div>
       </TableCell>
-      <TableCell className="bpm-cell mono">{track.bpm ?? "—"}</TableCell>
-      <TableCell>
+      <TableCell className="bpm-cell mono">
+        <span>{track.bpm ? Math.round(track.bpm * 10) / 10 : "—"}</span>
+        {fit?.gap != null && (
+          <small data-fit={fit.tempo} title={fitTitle(fit)}>
+            {fit.gap >= 0 ? "+" : "−"}
+            {Math.abs(fit.gap).toFixed(1)}%
+            {fit.multiple === 2 ? " ×2" : fit.multiple === 0.5 ? " ½" : ""}
+          </small>
+        )}
+      </TableCell>
+      <TableCell className="key-cell">
         <Badge
           variant="outline"
+          data-fit={fit?.key}
+          style={keyHue(track.camelot)}
           className={`key-badge ${loadedA ? "key-lime" : loadedB ? "key-orange" : ""}`}
         >
           {track.camelot ?? "—"}
         </Badge>
       </TableCell>
-      <TableCell className="genre-cell muted">{track.genre}</TableCell>
-      <TableCell className="mono muted">{formatTime(track.duration)}</TableCell>
       <TableCell className="waveform-cell">
         {track.analysis && <MiniWaveform track={track} />}
         {!track.analysis && (
@@ -541,9 +1008,9 @@ const LibraryTrackRow = memo(function TrackRowView({
               ? "Analyzing…"
               : analysisError
                 ? "Failed"
-                : track.available === false || !track.linkedFile
-                  ? "—"
-                  : "Queued"}
+                : libraryAnalyzable(track)
+                  ? "Queued"
+                  : "—"}
           </span>
         )}
         {analysisError && !track.analysis && track.available !== false && (
@@ -552,8 +1019,23 @@ const LibraryTrackRow = memo(function TrackRowView({
           </Button>
         )}
       </TableCell>
-      <TableCell>
+      <TableCell className="genre-cell muted">{track.genre}</TableCell>
+      <TableCell className="time-cell mono muted">
+        {formatTime(track.duration)}
+      </TableCell>
+      <TableCell className="actions-cell">
         <div className="track-actions">
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            className={previewing ? "is-previewing" : ""}
+            disabled={track.available === false}
+            aria-label={`${previewing ? "Stop preview of" : "Preview"} ${track.title}`}
+            title="Preview on headphones (or main output) without loading a deck"
+            onClick={() => togglePreview(track)}
+          >
+            <Icon name={previewing ? "stop" : "headphones"} size={14} />
+          </Button>
           <Button
             size="icon-xs"
             variant="ghost"
@@ -601,7 +1083,7 @@ const LibraryTrackRow = memo(function TrackRowView({
                   )
                 }
               >
-                <Icon name="star" size={16} className="size-4" />
+                <span className="energy-segment" aria-hidden="true" />
               </Button>
             )
           })}
@@ -612,24 +1094,104 @@ const LibraryTrackRow = memo(function TrackRowView({
 })
 
 const MiniWaveform = memo(function WaveformView({ track }: { track: Track }) {
-  const peaks = track.analysis!.peaks
-  const path = useMemo(
-    () =>
-      Array.from({ length: 80 }, (_, i) => {
-        const peak = peaks[Math.floor((i * peaks.length) / 80)] ?? 0
-        const height = Math.max(1, (Number.isFinite(peak) ? peak : 0) * 22)
-        return `M${i * 3 + 1},${12 - height / 2}v${height}`
-      }).join(" "),
-    [peaks]
-  )
+  const { theme, waveStyle } = useDJ()
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const analysis = track.analysis!
+  useEffect(() => {
+    const element = canvas.current,
+      context = element?.getContext("2d")
+    if (!element || !context) return
+    fitCanvas(element)
+    context.clearRect(0, 0, element.width, element.height)
+    drawWave(
+      context,
+      waveColumns(
+        analysis.peaks,
+        analysis.bands,
+        track.duration,
+        0,
+        track.duration,
+        element.width
+      ),
+      readPalette(element),
+      !!analysis.bands,
+      0,
+      waveStyle
+    )
+  }, [analysis, track.duration, theme, waveStyle])
   return (
-    <svg
+    <canvas
+      ref={canvas}
       className="library-mini-waveform"
-      viewBox="0 0 240 24"
       role="img"
       aria-label={`Waveform for ${track.title}`}
-    >
-      <path d={path} />
-    </svg>
+    />
   )
 })
+
+/** Camelot wheel color: hue steps 30° per number; B (major) is lighter. */
+function keyHue(camelot: string | null) {
+  const match = camelot?.match(/^(1[0-2]|[1-9])([AB])$/)
+  if (!match) return undefined
+  return {
+    "--key-hue": String((+match[1] - 1) * 30),
+    "--key-light": match[2] === "B" ? "68%" : "58%",
+  } as React.CSSProperties
+}
+
+function fitTitle(fit: MixFit | null) {
+  if (!fit) return "Load a track on the playing deck to see mix fit"
+  const tempo =
+    fit.gap === null
+      ? "tempo unknown"
+      : `${fit.gap >= 0 ? "+" : "−"}${Math.abs(fit.gap).toFixed(1)}% tempo${fit.multiple === 1 ? "" : " (half/double time)"}`
+  const key =
+    fit.key === "unknown"
+      ? "key unknown"
+      : fit.key === "good"
+        ? "compatible key"
+        : "key clash"
+  const label = {
+    good: "Easy mix",
+    ok: "Workable",
+    poor: "Hard mix",
+    unknown: "Fit unknown",
+  }[fit.overall]
+  return `${label} · ${tempo} · ${key}`
+}
+
+function SortHead({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  disabled = false,
+}: {
+  label: string
+  sortKey: SortKey
+  sort: SortState
+  onSort: (key: SortKey) => void
+  disabled?: boolean
+}) {
+  const active = sort?.key === sortKey
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      className="table-sort"
+      data-active={active || undefined}
+      disabled={disabled}
+      aria-label={`Sort by ${label.toLowerCase()}${active ? (sort.direction === 1 ? ", ascending" : ", descending") : ""}`}
+      onClick={() => onSort(sortKey)}
+    >
+      {label}
+      {active && (
+        <Icon
+          name="down"
+          size={11}
+          className={sort.direction === 1 ? "sort-asc" : undefined}
+        />
+      )}
+    </Button>
+  )
+}

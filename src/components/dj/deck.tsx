@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { Meter } from "./meter"
 import { beatOffset as gridOffset } from "@/lib/dj/beatgrid"
 import { Button } from "@/components/ui/button"
@@ -22,6 +22,7 @@ import type { DeckId } from "@/lib/dj/types"
 import { ChannelCue, ControllerControls } from "./controller-controls"
 import { PerformancePads } from "./performance-pads"
 import { transitionAnnotations } from "@/lib/dj/cue-suggestions"
+import { TRACK_DRAG_TYPE } from "@/lib/dj/mix-fit"
 
 export function Deck({
   id,
@@ -32,7 +33,8 @@ export function Deck({
   zone?: WaveformZone
   learning?: boolean
 }) {
-  const { engine, notify } = useDJ(),
+  const { engine, notify, tracks, loadTrack } = useDJ(),
+    [dropTarget, setDropTarget] = useState(false),
     deck = useEngine((state) => {
       const d = state[id],
         other = state[id === "A" ? "B" : "A"]
@@ -104,7 +106,29 @@ export function Deck({
         ? "16-BAR PHRASE · NOW"
         : `NEXT PHRASE · ${Math.ceil((64 - phraseBeats) / 4)} BARS`
   return (
-    <Card className={`deck deck-${color}`}>
+    <Card
+      className={`deck deck-${color} ${dropTarget ? "is-drop-target" : ""}`}
+      // Library rows can be dragged onto a deck to load them.
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes(TRACK_DRAG_TYPE)) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = "copy"
+        setDropTarget(true)
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+          setDropTarget(false)
+      }}
+      onDrop={(event) => {
+        const dropped = tracks.find(
+          (item) => item.id === event.dataTransfer.getData(TRACK_DRAG_TYPE)
+        )
+        setDropTarget(false)
+        if (!dropped) return
+        event.preventDefault()
+        void loadTrack(id, dropped)
+      }}
+    >
       <div className="deck-topline">
         <div>
           <span className={`deck-letter text-${color}`}>{id}</span>

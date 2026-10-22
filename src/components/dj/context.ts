@@ -52,6 +52,8 @@ export type DJContextValue = {
   scopeTracks: Track[]
   scopeLabel: string
   createPlaylist: (name: string, trackIds: string[]) => void
+  createSmartCrate: (name: string, query: string) => void
+  addToPlaylist: (playlistId: string, trackIds: string[]) => void
   midi: {
     connected: boolean
     name: string

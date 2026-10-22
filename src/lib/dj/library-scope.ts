@@ -7,6 +7,11 @@ import {
   upcomingPairs,
 } from "./transition-explorer"
 import { formatTime } from "./tracks"
+import {
+  lastPlayedMap,
+  matchesLibraryQuery,
+  parseLibraryQuery,
+} from "./library-query"
 
 type RecommendationOptions = {
   position?: number
@@ -49,25 +54,37 @@ export function scopedTracks(
   const collection = database.collections.find(
     (c) => `collection:${c.id}` === tab
   )
-  const members = collection
-    ? new Set(collection.trackIds)
-    : tab === "favorites"
-      ? new Set(database.favorites)
-      : tab === "queue"
-        ? new Set(database.queue)
-        : null
-  const needle = query.trim().toLowerCase()
+  const context = {
+    ratings: database.energyRatings,
+    lastPlayed: lastPlayedMap(database.history),
+  }
+  const members =
+    collection && collection.kind !== "smart"
+      ? new Set(collection.trackIds)
+      : tab === "favorites"
+        ? new Set(database.favorites)
+        : tab === "queue"
+          ? new Set(database.queue)
+          : tab === "history"
+            ? new Set(database.history.map((entry) => entry.trackId))
+            : null
+  // Smart crates re-evaluate their saved rule against the whole library.
+  const rule =
+    collection?.kind === "smart"
+      ? parseLibraryQuery(collection.query ?? "")
+      : null
+  const search = parseLibraryQuery(query)
   return tracks.filter(
     (track) =>
-      (collection
-        ? members!.has(track.id)
-        : tab === "all" ||
-          (tab === "local" && track.source === "local") ||
-          (tab === "favorites" && members!.has(track.id)) ||
-          (tab === "queue" && members!.has(track.id))) &&
-      `${track.title} ${track.artist} ${track.linkedFile?.path ?? ""}`
-        .toLowerCase()
-        .includes(needle) &&
+      (rule
+        ? matchesLibraryQuery(track, rule, context)
+        : collection
+          ? members!.has(track.id)
+          : tab === "all" ||
+            (tab === "local" && track.source === "local") ||
+            (["favorites", "queue", "history"].includes(tab) &&
+              members!.has(track.id))) &&
+      matchesLibraryQuery(track, search, context) &&
       (genre === "all" || track.genre === genre)
   )
 }
@@ -78,6 +95,7 @@ export function scopeName(database: LibraryDatabase, tab: string) {
       all: "All tracks",
       local: "On this device",
       favorites: "Favorites",
+      history: "Recently played",
       queue: "Automix queue",
     }[tab] ??
     "Selected collection"

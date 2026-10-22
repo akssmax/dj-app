@@ -1,10 +1,30 @@
 import { readLinkedFile } from "./linked-files"
 import type { Analysis, Track } from "./types"
 
+/** Tracks the background queue can read without a deck: linked files that
+ * are reachable, offline copies, and bundled demo audio. */
+export function libraryAnalyzable(track: Track) {
+  return (
+    (!!track.linkedFile && track.available !== false) ||
+    !!track.file ||
+    (track.source === "demo" && !!track.url)
+  )
+}
+
+async function libraryAudio(track: Track, signal: AbortSignal): Promise<Blob> {
+  if (track.linkedFile) return readLinkedFile(track.linkedFile)
+  if (track.file) return track.file
+  if (track.url) {
+    const response = await fetch(track.url, { signal })
+    if (!response.ok) throw new Error("Could not read this track's audio.")
+    return response.blob()
+  }
+  throw new Error("This track has no audio source to analyze.")
+}
+
 // One file at a time; decoding never starts playback or replaces a deck.
 export async function analyzeLibraryTrack(track: Track, signal: AbortSignal) {
-  if (!track.linkedFile) throw new Error("This track has no linked file.")
-  const file = await readLinkedFile(track.linkedFile)
+  const file = await libraryAudio(track, signal)
   if (file.size > 80 * 1024 * 1024)
     throw new Error(
       "File exceeds the 80 MB analysis limit. Load a deck to play it."

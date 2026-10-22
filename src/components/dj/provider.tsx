@@ -23,6 +23,7 @@ import {
   emptyDeck,
   emptyController,
   effectiveDeckRate,
+  deckMixGain,
 } from "@/lib/dj/engine"
 import type { EngineState } from "@/lib/dj/engine"
 import { DJContext, useDJ } from "./context"
@@ -221,30 +222,62 @@ export function DJProvider({ children }: { children: ReactNode }) {
     (original: Track, analyzed: Track) => {
       update((db) => ({
         ...db,
-        tracks: db.tracks.map((current) =>
-          current.id === original.id &&
-          linkedFingerprint(current) === linkedFingerprint(original)
-            ? {
-                ...analyzed,
-                ...current,
-                analysis: analyzed.analysis,
-                duration: analyzed.duration,
-                bpm: current.grid?.bpm ?? current.bpm ?? analyzed.bpm,
-                key: analyzed.key,
-                camelot: analyzed.camelot,
-                energy: analyzed.energy,
-              }
-            : current
-        ),
+        // Demo tracks live in code; their analysis is stored as an override.
+        tracks: !db.tracks.some((current) => current.id === original.id)
+          ? [...db.tracks, analyzed]
+          : db.tracks.map((current) =>
+              current.id === original.id &&
+              linkedFingerprint(current) === linkedFingerprint(original)
+                ? {
+                    ...analyzed,
+                    ...current,
+                    analysis: analyzed.analysis,
+                    duration: analyzed.duration,
+                    bpm: current.grid?.bpm ?? current.bpm ?? analyzed.bpm,
+                    key: analyzed.key,
+                    camelot: analyzed.camelot,
+                    energy: analyzed.energy,
+                  }
+                : current
+            ),
       }))
     },
     [update]
   )
-  const libraryAnalysis = useLibraryAnalysis(
-    database.tracks,
-    ready,
-    saveLibraryAnalysis
-  )
+  // History: a track counts as played after 30 s of audible playback.
+  useEffect(() => {
+    if (!engine) return
+    const heard = {
+      A: { id: null as string | null, seconds: 0, logged: false },
+      B: { id: null as string | null, seconds: 0, logged: false },
+    }
+    const timer = setInterval(() => {
+      for (const id of ["A", "B"] as const) {
+        const deck = engine.state[id],
+          entry = heard[id]
+        if ((deck.track?.id ?? null) !== entry.id) {
+          entry.id = deck.track?.id ?? null
+          entry.seconds = 0
+          entry.logged = false
+        }
+        if (!entry.id || entry.logged) continue
+        if (deck.playing && deckMixGain(engine.state, id) > 0.05)
+          entry.seconds++
+        if (entry.seconds < 30) continue
+        entry.logged = true
+        const trackId = entry.id
+        update((db) => ({
+          ...db,
+          history: [
+            ...db.history,
+            { trackId, at: new Date().toISOString() },
+          ].slice(-500),
+        }))
+      }
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [engine, update])
+  const libraryAnalysis = useLibraryAnalysis(tracks, ready, saveLibraryAnalysis)
 
   useEffect(() => {
     let disposed = false
@@ -1044,6 +1077,31 @@ export function DJProvider({ children }: { children: ReactNode }) {
     setLibraryGenre,
     scopeTracks,
     scopeLabel: scopeName(database, libraryTab),
+    createSmartCrate: (name, query) => {
+      const id = crypto.randomUUID()
+      update((db) => ({
+        ...db,
+        collections: [
+          ...db.collections,
+          { id, name: name.trim(), kind: "smart", trackIds: [], query },
+        ],
+        session: { ...db.session, libraryTab: `collection:${id}` },
+      }))
+      setLibraryQuery("")
+      setLibraryGenre("all")
+    },
+    addToPlaylist: (playlistId, trackIds) =>
+      update((db) => ({
+        ...db,
+        collections: db.collections.map((collection) =>
+          collection.id === playlistId && collection.kind === "playlist"
+            ? {
+                ...collection,
+                trackIds: [...new Set([...collection.trackIds, ...trackIds])],
+              }
+            : collection
+        ),
+      })),
     createPlaylist: (name, trackIds) => {
       const id = crypto.randomUUID()
       update((db) => ({

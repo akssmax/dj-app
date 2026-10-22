@@ -14,9 +14,13 @@ export type LibraryDatabase = {
   collections: {
     id: string
     name: string
-    kind: "folder" | "playlist"
+    kind: "folder" | "playlist" | "smart"
     trackIds: string[]
+    /** Smart crates: a library search rule (see library-query.ts). */
+    query?: string
   }[]
+  /** Tracks heard for at least 30 s, newest last (capped). */
+  history: { trackId: string; at: string }[]
   favorites: string[]
   energyRatings: Partial<Record<string, EnergyRating>>
   queue: string[]
@@ -49,6 +53,7 @@ export const defaultDatabase: LibraryDatabase = {
   cues: {},
   cueLabels: {},
   collections: [],
+  history: [],
   favorites: [],
   energyRatings: {},
   queue: [],
