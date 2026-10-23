@@ -31,6 +31,7 @@ import { DJContext, useDJ } from "./context"
 import type { DJContextValue } from "./context"
 
 import { demoTracks } from "@/lib/dj/tracks"
+import { dropStaleDemos } from "@/lib/dj/stale-demos"
 import { FLX4Feedback } from "@/lib/dj/flx4-feedback"
 import { FLX4Decoder } from "@/lib/dj/midi"
 import { MidiActivity } from "@/lib/dj/midi-activity"
@@ -397,6 +398,8 @@ export function DJProvider({ children }: { children: ReactNode }) {
     automixRef.current = mix
     setAutomix(emptyAutomix)
     void readLibrary()
+      // Saved records of replaced demo tracks would load deleted audio.
+      .then((stored) => dropStaleDemos(stored))
       .then(async (stored) => ({
         ...stored,
         tracks: await withDemoAnalysis(stored.tracks),
