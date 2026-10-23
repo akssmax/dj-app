@@ -6,7 +6,7 @@ import type { DeckId } from "@/lib/dj/types"
 import { useDJ, useEngine } from "./provider"
 import type { WaveformZone } from "./waveform"
 import type { SuggestedCue } from "@/lib/dj/cue-suggestions"
-import { drawWave, fitCanvas, readPalette } from "./wave-canvas"
+import { drawVocalLane, drawWave, fitCanvas, readPalette } from "./wave-canvas"
 import type { WavePalette } from "./wave-canvas"
 
 const ZOOMS = [4, 8, 16, 32]
@@ -69,7 +69,7 @@ export function ScrollingWaveform({
         ? (audio?.livePosition(id) ?? view.position)
         : view.position
       const ratio = fitCanvas(element)
-      const key = `${position.toFixed(4)}|${element.width}|${track?.id}|${view.bars}|${view.cues.join()}|${band?.start}|${band?.end}|${marks.map((m) => m.position).join()}|${style}|${track?.analysis?.bands ? 1 : 0}`
+      const key = `${position.toFixed(4)}|${element.width}|${track?.id}|${view.bars}|${view.cues.join()}|${band?.start}|${band?.end}|${marks.map((m) => m.position).join()}|${style}|${track?.analysis?.bands ? 1 : 0}|${track?.analysis?.vocals?.length ?? 0}`
       if (key === last) return
       last = key
       if (!palette) {
@@ -178,6 +178,13 @@ export function ScrollingWaveform({
         !!track.analysis?.bands,
         width / 2,
         style
+      )
+      drawVocalLane(
+        context,
+        track.analysis?.vocals,
+        start,
+        start + span,
+        palette
       )
       // Suggested transition cues: dashed lines with labels along the bottom.
       context.setLineDash([4 * ratio, 3 * ratio])

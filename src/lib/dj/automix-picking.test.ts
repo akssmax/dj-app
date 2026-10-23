@@ -116,3 +116,57 @@ describe("lookahead track picking", () => {
     expect(first.track.id).toBe("other")
   })
 })
+
+describe("vocal-aware transitions", () => {
+  // 300 s tracks at 128 BPM: a 16-bar blend lasts 30 s.
+  const sung = (from: number, to: number) =>
+    Array.from({ length: 300 }, (_, t) => (t >= from && t < to ? 0.9 : 0))
+  const withVocals = (vocals: number[], extra: Partial<Track> = {}) =>
+    ({
+      ...shaped((t) => (t < 240 ? 0.8 : 0.3)),
+      ...extra,
+      analysis: {
+        ...shaped((t) => (t < 240 ? 0.8 : 0.3)).analysis!,
+        vocals,
+      },
+    }) as Track
+
+  it("blends on instrumental parts instead of voice over voice", () => {
+    // Outgoing sings until 240 s; incoming starts singing at 32 s.
+    const out = withVocals(sung(0, 240))
+    const incoming = withVocals(sung(32, 300), { id: "next" })
+    const bass = planTransitions(out, incoming, 0).find((p) => p.id === "bass")!
+    expect(bass.outStart).toBeGreaterThanOrEqual(240)
+    expect(bass.vocalClash).toBeLessThan(0.08)
+    expect(bass.reasons.join(" ")).toContain("No vocal overlap")
+  })
+
+  it("prefers a short exit when voices would overlap anyway", () => {
+    const out = withVocals(sung(0, 300))
+    const incoming = withVocals(sung(0, 300), { id: "next" })
+    const plans = planTransitions(out, incoming, 0)
+    const long = plans.find((p) => p.id === "long")
+    const blend = plans.find((p) => p.id === "blend")!
+    expect(blend.vocalClash).toBeGreaterThan(0.5)
+    expect(blend.warnings.join(" ")).toContain("overlap")
+    // A cut or echo exit should now outrank any long overlap.
+    const short = plans.find((p) => p.id === "cut" || p.id === "echo")!
+    expect(short.score).toBeGreaterThan(blend.score)
+    if (long) expect(short.score).toBeGreaterThan(long.score)
+  })
+
+  it("aligns phrases to the detected phrase offset", () => {
+    const out = withVocals(sung(0, 0))
+    const shifted = {
+      ...out,
+      analysis: { ...out.analysis!, phraseOffset: 7.5 },
+    } as Track
+    const incoming = withVocals(sung(0, 0), { id: "next" })
+    const bass = planTransitions(shifted, incoming, 0).find(
+      (p) => p.id === "bass"
+    )!
+    const phrase = (60 / 128) * 64
+    const fromOrigin = (bass.outStart - 7.5) / phrase
+    expect(Math.abs(fromOrigin - Math.round(fromOrigin))).toBeLessThan(0.001)
+  })
+})

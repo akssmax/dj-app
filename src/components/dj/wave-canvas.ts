@@ -3,6 +3,7 @@ import type { WaveColumn } from "@/lib/dj/wave-peaks"
 export type WavePalette = {
   deck: string
   foreground: string
+  vocal: string
   low: string
   mid: string
   high: string
@@ -14,6 +15,7 @@ const tokens = [
   "--wave-mid",
   "--wave-high",
   "--foreground",
+  "--vocal",
 ] as const
 
 /** Resolve theme tokens to colors the canvas understands. The element's own
@@ -21,12 +23,12 @@ const tokens = [
 export function readPalette(element: HTMLElement): WavePalette {
   const deck = getComputedStyle(element).color
   const previous = element.style.color
-  const [low, mid, high, foreground] = tokens.map((token) => {
+  const [low, mid, high, foreground, vocal] = tokens.map((token) => {
     element.style.color = `var(${token})`
     return getComputedStyle(element).color
   })
   element.style.color = previous
-  return { deck, foreground, low, mid, high, played: 0.38 }
+  return { deck, foreground, vocal, low, mid, high, played: 0.38 }
 }
 
 /** Fit a canvas bitmap to its CSS box at device resolution. */
@@ -147,5 +149,30 @@ export function drawWave(
       context.fill()
     }
   }
+  context.globalAlpha = 1
+}
+
+/**
+ * Thin lane along the top where vocals or a lead melody were detected, so
+ * the transition planner's view of the track is visible while mixing.
+ */
+export function drawVocalLane(
+  context: CanvasRenderingContext2D,
+  vocals: number[] | undefined,
+  start: number,
+  end: number,
+  palette: WavePalette
+) {
+  if (!vocals?.length || end <= start) return
+  const { width, height } = context.canvas,
+    lane = Math.max(2, Math.round(height * 0.05))
+  context.fillStyle = palette.vocal
+  context.globalAlpha = 0.85
+  context.beginPath()
+  for (let x = 0; x < width; x++) {
+    const second = Math.floor(start + (x / width) * (end - start))
+    if ((vocals[second] ?? 0) >= 0.35) context.rect(x, 0, 1, lane)
+  }
+  context.fill()
   context.globalAlpha = 1
 }

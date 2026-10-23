@@ -43,6 +43,7 @@ const analyzed: Track = {
       mid: [0.1, 0.2],
       high: [0.1, 0.2],
     },
+    vocals: [0, 0],
     energyCurve: [],
     bpm: 128,
     beatOffset: 0,
@@ -310,7 +311,7 @@ describe("musical transition planning", () => {
     )
     expect(new Set(ease.map((p) => p.score)).size).toBeGreaterThan(3)
   })
-  it("chooses a measured lower-energy early entry without claiming vocal or drop detection", () => {
+  it("chooses a measured lower-energy early entry and labels detection as an estimate", () => {
     const curve = Array.from({ length: 366 }, (_, i) =>
       i < 30 ? 0.8 : i < 65 ? 0.1 : 0.5
     )
@@ -321,7 +322,7 @@ describe("musical transition planning", () => {
     })
     const bass = plans.find((p) => p.id === "bass")!
     expect(bass.inStart).toBe(30)
-    expect(bass.warnings.some((w) => w.includes("No vocal or drop"))).toBe(true)
+    expect(bass.warnings.some((w) => w.includes("estimates"))).toBe(true)
   })
   it("shortens late routines safely without placing the exit behind the playhead", () => {
     const position = analyzed.duration - 1

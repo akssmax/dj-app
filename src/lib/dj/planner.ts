@@ -294,6 +294,72 @@ export function sectionEnergy(track: Track, position: number, length: number) {
 }
 const energyAt = sectionEnergy
 
+/** Where 16-bar phrases start: a corrected grid wins, then the detected
+ * phrase alignment, then the first beat. */
+export function phraseOrigin(track: Track) {
+  return track.grid
+    ? gridOffset(track)
+    : (track.analysis?.phraseOffset ?? gridOffset(track))
+}
+
+/** Mean vocal/lead presence over a span; null when not analyzed. */
+export function vocalAt(track: Track, start: number, length: number) {
+  const curve = track.analysis?.vocals
+  if (!curve?.length) return null
+  const from = Math.max(0, Math.floor(start)),
+    to = Math.min(curve.length, Math.max(from + 1, Math.ceil(start + length)))
+  let sum = 0
+  for (let i = from; i < to; i++) sum += curve[i]
+  return to > from ? sum / (to - from) : 0
+}
+
+/**
+ * How much foreground voice/lead plays over the other during a transition:
+ * mean of outgoing × incoming presence across the overlap (0–1).
+ */
+export function vocalClash(
+  out: Track,
+  outStart: number,
+  incoming: Track,
+  inStart: number,
+  duration: number,
+  rate: number
+) {
+  const a = out.analysis?.vocals,
+    b = incoming.analysis?.vocals
+  if (!a?.length || !b?.length) return null
+  const at = (curve: number[], time: number) =>
+    curve[Math.max(0, Math.min(curve.length - 1, Math.floor(time)))] ?? 0
+  const steps = Math.max(1, Math.round(duration))
+  let sum = 0
+  for (let k = 0; k < steps; k++)
+    sum += at(a, outStart + k) * at(b, inStart + k * rate)
+  // Cuts and one-beat FX exits barely overlap: count a fraction.
+  return (sum / steps) * Math.min(1, duration / 2)
+}
+
+/** Phrase lines plus detected arrangement changes between two times. */
+function candidateStarts(
+  track: Track,
+  origin: number,
+  phrase: number,
+  from: number,
+  to: number
+) {
+  const times: number[] = []
+  for (
+    let t = origin + Math.ceil((from - origin) / phrase) * phrase;
+    t <= to;
+    t += phrase
+  )
+    times.push(t)
+  for (const section of track.analysis?.sections ?? [])
+    if (section >= from && section <= to) times.push(section)
+  return [...new Set(times.map((t) => Math.round(t * 1000) / 1000))].sort(
+    (x, y) => x - y
+  )
+}
+
 /** End of the last 16-bar phrase that reaches ~75% of the track's loudest
  * phrase: everything after it is outro. 0 when loudness is unknown. */
 export function lastLoudPhraseEnd(
@@ -355,8 +421,10 @@ export function planTransitions(
     targetRate <= 1.16
   const harmonic = harmonicCompatibility(out.camelot, incoming.camelot),
     pitchChanges = canMatch && Math.abs(ratio - 1) > 0.005
-  const offset = Math.max(0, gridOffset(out)),
-    entry = inCue ?? Math.max(0, gridOffset(incoming))
+  const offset = Math.max(0, phraseOrigin(out)),
+    entry = inCue ?? Math.max(0, phraseOrigin(incoming))
+  const vocalsKnown =
+    !!out.analysis?.vocals?.length && !!incoming.analysis?.vocals?.length
   const intent = options.intent ?? "maintain",
     energyDelta = ((incoming.energy ?? 5) - (out.energy ?? 5)) / 10
   const energyFit =
@@ -398,56 +466,78 @@ export function planTransitions(
         duration = Math.floor(duration / (beat * 8)) * beat * 8
       const latest = Math.max(position, out.duration - duration - 0.02),
         earliest = Math.max(position, out.duration * 0.55)
-      let outStart = Math.max(
-          position,
-          offset + Math.floor((latest - offset) / phrase) * phrase
-        ),
-        bestCost = Infinity
+      const inLength = duration * rate
       // Outro first: leave after the last high-energy phrase, so the mix
       // never cuts a final drop and never exits on a mid-track breakdown.
+      // Instrumental stretches are preferred on both sides.
       const loudEnd = lastLoudPhraseEnd(out, offset, phrase)
-      for (
-        let t = offset + Math.ceil((earliest - offset) / phrase) * phrase;
-        outCue === null && t <= latest;
-        t += phrase
-      ) {
-        const early = t < loudEnd ? 1 + ((loudEnd - t) / out.duration) * 3 : 0
-        const cost =
-          early +
-          (energyAt(out, t, Math.min(duration, phrase)) ?? 0.5) * 0.35 +
-          ((latest - t) / out.duration) * 0.6
-        if (cost < bestCost) {
-          bestCost = cost
-          outStart = t
-        }
-      }
-      outStart = outCue ?? Math.min(latest, outStart)
-      let inStart = Math.max(
-        0,
-        Math.min(entry, incoming.duration - duration * rate - 0.02)
+      const exitCost = (t: number) =>
+        (t < loudEnd ? 1 + ((loudEnd - t) / out.duration) * 3 : 0) +
+        (energyAt(out, t, Math.min(duration, phrase)) ?? 0.5) * 0.35 +
+        ((latest - t) / out.duration) * 0.6 +
+        (vocalAt(out, t, duration) ?? 0) * 0.8
+      const fallbackExit = Math.max(
+        position,
+        offset + Math.floor((latest - offset) / phrase) * phrase
       )
-      if (inCue === null && match && incoming.analysis?.energyCurve.length) {
-        let best = energyAt(incoming, inStart, duration * rate) ?? 1
-        const inPhrase = (60 / incoming.bpm!) * 64
-        for (
-          let t = entry + inPhrase;
-          t <=
-          Math.min(
-            incoming.duration * 0.2,
-            60,
-            incoming.duration - duration * rate
-          );
-          t += inPhrase
-        ) {
-          const cost =
-            (energyAt(incoming, t, duration * rate) ?? 1) +
-            (t / incoming.duration) * 0.15
-          if (cost < best) {
-            best = cost
-            inStart = t
+      const exits =
+        outCue !== null
+          ? [{ t: outCue, cost: 0 }]
+          : candidateStarts(out, offset, phrase, earliest, latest)
+              .map((t) => ({ t, cost: exitCost(t) }))
+              .sort((x, y) => x.cost - y.cost)
+              .slice(0, 6)
+      const firstEntry = Math.max(
+        0,
+        Math.min(entry, incoming.duration - inLength - 0.02)
+      )
+      const entryCost = (t: number) =>
+        (energyAt(incoming, t, inLength) ?? 1) +
+        (t / incoming.duration) * 0.15 +
+        (vocalAt(incoming, t, inLength) ?? 0) * 0.8
+      const entries =
+        inCue === null && match && incoming.analysis?.energyCurve.length
+          ? [
+              firstEntry,
+              ...candidateStarts(
+                incoming,
+                entry,
+                (60 / incoming.bpm!) * 64,
+                entry + 0.01,
+                Math.min(
+                  incoming.duration * 0.2,
+                  60,
+                  incoming.duration - inLength
+                )
+              ),
+            ]
+              .map((t) => ({ t, cost: entryCost(t) }))
+              .sort((x, y) => x.cost - y.cost)
+              .slice(0, 4)
+          : [{ t: firstEntry, cost: 0 }]
+      // Choose the pair together: the cheapest exit and entry can still put
+      // two voices on top of each other.
+      let outStart = fallbackExit,
+        inStart = firstEntry,
+        bestCost = Infinity
+      for (const exit of exits)
+        for (const enter of entries) {
+          const clash =
+            vocalClash(out, exit.t, incoming, enter.t, duration, rate) ?? 0
+          const cost = exit.cost + enter.cost + clash * 3
+          if (cost < bestCost) {
+            bestCost = cost
+            outStart = exit.t
+            inStart = enter.t
           }
         }
-      }
+      outStart = outCue ?? Math.min(latest, outStart)
+      const clash = vocalClash(out, outStart, incoming, inStart, duration, rate)
+      // What an 8-bar blend at these points would stack: short exits earn
+      // that back, because they avoid the overlap a blend would cause.
+      const risk =
+        vocalClash(out, outStart, incoming, inStart, beat * 32, rate) ?? 0
+      const short = duration < beat * 8
       const exitEnergy = energyAt(out, outStart, duration)
       const cueBeatDifference = tempoKnown
         ? ((inStart - gridOffset(incoming)) * incoming.bpm!) / 60 -
@@ -504,7 +594,13 @@ export function planTransitions(
               (longOverlap ? (harmonic - 0.5) * 15 : 0) -
               (pitchChanges && longOverlap ? 5 : 0) -
               repeated -
-              (d.execution === "reverb" && (exitEnergy ?? 0.5) > 0.65 ? 12 : 0)
+              (d.execution === "reverb" && (exitEnergy ?? 0.5) > 0.65
+                ? 12
+                : 0) -
+              // Two voices or leads at once: long blends suffer most.
+              (clash ?? 0) *
+                (duration >= beat * 32 ? 30 : duration >= beat * 8 ? 14 : 3) +
+              (short ? risk * 28 : 0)
           )
         )
       )
@@ -546,7 +642,14 @@ export function planTransitions(
               "Limited space: this routine is shortened. Consider a cut or FX exit.",
             ]
           : []),
-        "Phrase and arrangement zones are estimates. No vocal or drop detection yet.",
+        ...(clash !== null && clash >= 0.2
+          ? [
+              `Vocals or lead melodies overlap in about ${Math.round(clash * 100)}% of this mix. Keep it short, or cut the incoming mids until the outgoing vocal ends.`,
+            ]
+          : []),
+        vocalsKnown
+          ? "Vocal and phrase detection are estimates; listen to the overlap."
+          : "Phrase zones are estimates. Vocal detection runs after analysis.",
       ]
       const bassSwapAt = ["bass", "long", "filter", "loop"].includes(
         d.execution
@@ -578,6 +681,7 @@ export function planTransitions(
           incomingRate,
           anchors: { out: outCue, incoming: inCue },
           cuePhaseWarning,
+          vocalClash: clash,
           reasons: [
             match
               ? `Matches effective tempo at ${(bpm * outRate).toFixed(1)} BPM`
@@ -596,6 +700,13 @@ export function planTransitions(
               ? `Technique suits ${out.genre} / ${incoming.genre}`
               : "Choose by arrangement and listening, alongside genre",
             `Energy goal: ${intent}${repeated ? "; recent repeats ranked lower" : ""}`,
+            short && risk >= 0.2
+              ? `Short exit avoids a vocal clash: a blend here would overlap about ${Math.round(risk * 100)}%`
+              : clash === null
+                ? "Vocal overlap unknown until both tracks are analyzed"
+                : clash < 0.08
+                  ? "No vocal overlap: the blend sits on instrumental parts"
+                  : `Vocal overlap about ${Math.round(clash * 100)}%`,
             ...(inCue !== null
               ? [
                   "Uses your selected incoming cue; audition phrasing before starting",

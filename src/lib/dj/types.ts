@@ -44,6 +44,12 @@ export type Analysis = {
   analyzedAt?: string
   peaks: number[]
   bands?: WaveBands
+  /** Per-second vocal / lead-melody presence 0–1 (estimate). */
+  vocals?: number[]
+  /** Detected arrangement changes, seconds on the bar grid. */
+  sections?: number[]
+  /** Start of the first 16-bar phrase, aligned to detected changes. */
+  phraseOffset?: number
   energyCurve: number[]
   bpm: number | null
   beatOffset: number
@@ -124,6 +130,8 @@ export type Transition = {
   anchors?: { out: number | null; incoming: number | null }
   bassSwapAt?: number
   cuePhaseWarning?: string
+  /** Voice/lead overlap during the mix, 0–1; null if not analyzed. */
+  vocalClash?: number | null
   steps: { at: number; label: string; why: string }[]
 }
 export type MixIntent = "maintain" | "lift" | "ease"

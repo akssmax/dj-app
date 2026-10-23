@@ -1,5 +1,14 @@
 import { Button } from "@/components/ui/button"
 import { Slider } from "@/components/ui/slider"
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Icon } from "./icons"
 import { useDJ, useEngine } from "./provider"
 import type { DeckId } from "@/lib/dj/types"
 
@@ -29,31 +38,6 @@ export function ControllerControls() {
   const controls = useEngine((state) => ({ ...state.controller }))
   return (
     <div className="controller-controls">
-      <div className="controller-smart-controls">
-        <Button
-          size="xs"
-          variant={controls.smartCFX ? "secondary" : "outline"}
-          aria-pressed={controls.smartCFX}
-          onClick={() =>
-            engine?.handleControllerAction({ type: "smartCFX", value: 1 })
-          }
-        >
-          Smart CFX
-        </Button>
-        <Button
-          size="xs"
-          variant={controls.smartFader ? "secondary" : "outline"}
-          aria-pressed={controls.smartFader}
-          onClick={() =>
-            engine?.handleControllerAction({ type: "smartFader", value: 1 })
-          }
-        >
-          Smart Fader
-        </Button>
-      </div>
-      <span className="controller-fx-target">
-        BEAT FX · {controls.fxTarget === "both" ? "A + B" : controls.fxTarget}
-      </span>
       <details>
         <summary>Monitor & mic</summary>
         {(["headphoneMix", "headphoneLevel", "micLevel"] as const).map(
@@ -102,6 +86,77 @@ export function ControllerControls() {
           · {controls.micEnabled ? "Mic enabled" : "Mic off"}
         </p>
       </details>
+    </div>
+  )
+}
+
+/** Mixer header: small pills for the assists that are on, plus a menu. */
+export function MixerOptions() {
+  const { engine } = useDJ()
+  const controls = useEngine((state) => ({
+    smartCFX: state.controller.smartCFX,
+    smartFader: state.controller.smartFader,
+    fxTarget: state.controller.fxTarget,
+  }))
+  const toggle = (type: "smartCFX" | "smartFader") =>
+    engine?.handleControllerAction({ type, value: 1 })
+  return (
+    <div className="mixer-options">
+      {controls.smartCFX && (
+        <span className="mixer-assist" title="Smart CFX on">
+          CFX
+        </span>
+      )}
+      {controls.smartFader && (
+        <span className="mixer-assist" title="Smart Fader on">
+          FADER
+        </span>
+      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Mixer options"
+              title="Mixer options"
+            />
+          }
+        >
+          <Icon name="settings" size={14} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-64">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Mixer assists</DropdownMenuLabel>
+            <DropdownMenuCheckboxItem
+              checked={controls.smartCFX}
+              onCheckedChange={() => toggle("smartCFX")}
+            >
+              <span className="mixer-option-text">
+                Smart CFX
+                <small>Filter knob also adds echo or reverb</small>
+              </span>
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={controls.smartFader}
+              onCheckedChange={() => toggle("smartFader")}
+            >
+              <span className="mixer-option-text">
+                Smart Fader
+                <small>Crossfader syncs tempo and swaps the bass</small>
+              </span>
+            </DropdownMenuCheckboxItem>
+          </DropdownMenuGroup>
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>
+              Beat FX target ·{" "}
+              {controls.fxTarget === "both"
+                ? "A + B"
+                : `deck ${controls.fxTarget}`}
+            </DropdownMenuLabel>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }

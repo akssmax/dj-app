@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import type { Track, Transition } from "@/lib/dj/types"
 import { formatTime } from "@/lib/dj/tracks"
 import { waveColumns } from "@/lib/dj/wave-peaks"
-import { drawWave, fitCanvas, readPalette } from "./wave-canvas"
+import { drawVocalLane, drawWave, fitCanvas, readPalette } from "./wave-canvas"
 import { useDJ } from "./provider"
 import { useEffect, useRef, useState } from "react"
 import type { ReactNode } from "react"
@@ -190,16 +190,19 @@ export function Waveform({
       end,
       element.width
     )
+    const palette = readPalette(element)
     drawWave(
       context,
       columns,
-      readPalette(element),
+      palette,
       !!bands,
       ((position - start) / (end - start)) * element.width,
       waveStyle
     )
+    drawVocalLane(context, track?.analysis?.vocals, start, end, palette)
   }, [
     peaks,
+    track?.analysis?.vocals,
     bands,
     fullDuration,
     start,

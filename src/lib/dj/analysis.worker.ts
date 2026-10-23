@@ -1,6 +1,7 @@
 import MusicTempo from "music-tempo"
 import type { Analysis } from "./types"
 import { measureBands, measurePeaks } from "./wave-peaks"
+import { consensusTempo, phraseStructure, vocalPresence } from "./structure"
 
 // FFT + Krumhansl-Schmuckler profiles: a provisional global key, not ground truth.
 function keyEstimate(samples: Float32Array, sampleRate: number) {
@@ -104,14 +105,29 @@ self.onmessage = (
     channels?: Float32Array[]
     sampleRate: number
     waveformOnly?: boolean
+    bpm?: number | null
+    beatOffset?: number
   }>
 ) => {
   const { sampleRate } = event.data
   const channels = event.data.channels ?? [event.data.samples!]
   if (event.data.waveformOnly) {
+    // Refresh for tracks analyzed by an older version: waveform bands plus
+    // structure, keeping the saved tempo and grid.
+    const bands = measureBands(channels, sampleRate),
+      vocals = vocalPresence(channels, sampleRate),
+      duration = (channels[0]?.length ?? 0) / sampleRate
     self.postMessage({
       peaks: measurePeaks(channels, sampleRate),
-      bands: measureBands(channels, sampleRate),
+      bands,
+      vocals,
+      ...phraseStructure(
+        bands,
+        vocals,
+        duration,
+        event.data.bpm ?? null,
+        event.data.beatOffset ?? 0
+      ),
     })
     return
   }
@@ -131,27 +147,47 @@ self.onmessage = (
     }
     energyCurve.push(Math.sqrt(sum / Math.max(1, count)))
   }
-  let bpm: number | null = null,
-    beatOffset = 0
-  try {
-    const tempo = new MusicTempo(
-      samples.subarray(0, Math.min(samples.length, sampleRate * 45)),
-      {
+  // Tempo from three windows (start, middle, three quarters) so one intro or
+  // breakdown cannot decide it; the beat phase comes from the start window.
+  const tempoAt = (from: number, seconds: number) => {
+    try {
+      const start = Math.floor(Math.max(0, from) * sampleRate)
+      const window = samples.subarray(
+        start,
+        Math.min(samples.length, start + sampleRate * seconds)
+      )
+      if (window.length < sampleRate) return null
+      const tempo = new MusicTempo(window, {
         hopSize: Math.round(sampleRate * 0.01),
         timeStep: Math.round(sampleRate * 0.01) / sampleRate,
+      })
+      return {
+        bpm: Math.round(tempo.tempo * 10) / 10,
+        first: (tempo.beats[0] ?? 0) + start / sampleRate,
       }
-    )
-    bpm = Math.round(tempo.tempo * 10) / 10
-    beatOffset = tempo.beats[0] ?? 0
-  } catch {
-    /* Quiet, ambient, or non-rhythmic tracks may have no reliable tempo. */
+    } catch {
+      /* Quiet, ambient, or non-rhythmic passages have no reliable tempo. */
+      return null
+    }
   }
+  const duration = samples.length / sampleRate
+  const opening = tempoAt(0, 45)
+  const bpm = consensusTempo([
+    opening?.bpm ?? null,
+    tempoAt(duration * 0.5 - 15, 30)?.bpm ?? null,
+    tempoAt(duration * 0.75 - 15, 30)?.bpm ?? null,
+  ])
+  const beatOffset = opening?.first ?? 0
+  const vocals = vocalPresence(channels, sampleRate)
+  const structure = phraseStructure(bands, vocals, duration, bpm, beatOffset)
   const key = keyEstimate(samples, sampleRate)
   const avg =
     energyCurve.reduce((a, b) => a + b, 0) / Math.max(1, energyCurve.length)
   const result: Analysis = {
     peaks,
     bands,
+    vocals,
+    ...structure,
     energyCurve,
     bpm,
     beatOffset,

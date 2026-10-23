@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties } from "react"
+import { createPortal } from "react-dom"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -401,6 +402,20 @@ export function TransitionCoach() {
   const coach = useRef<HTMLDivElement>(null)
   const [popupTop, setPopupTop] = useState(80)
   const [expanded, setExpanded] = useState(false)
+  // Phones and tablets get a slim dock; the full panel opens as a sheet.
+  const compact = useCompactLayout()
+  const [sheetOpen, setSheetOpen] = useState(false)
+  useEffect(() => {
+    if (!compact) setSheetOpen(false)
+  }, [compact])
+  useEffect(() => {
+    if (!sheetOpen) return
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !details) setSheetOpen(false)
+    }
+    window.addEventListener("keydown", close)
+    return () => window.removeEventListener("keydown", close)
+  }, [sheetOpen, details])
   useEffect(() => {
     if (!details) return
     const position = () =>
@@ -509,7 +524,19 @@ export function TransitionCoach() {
           : automix.active
             ? "Waiting for playback"
             : "Enable Automix to pick the next track")
-  return (
+  const toggleAutomix = (enabled: boolean) => {
+    if (enabled) void startAutomix(outId)
+    else if (automix.active) stopAutomix()
+    else engine?.cancelAuto()
+  }
+  const mixNow = () =>
+    running
+      ? automix.active
+        ? stopAutomix()
+        : engine?.cancelAuto()
+      : plan &&
+        void engine?.startAuto(outId, plan, outCue === null && inCue === null)
+  const panel = (
     <Card
       ref={coach}
       className="compact-coach automix-bar"
@@ -527,11 +554,7 @@ export function TransitionCoach() {
             checked={running}
             disabled={!engine || (!running && blocked)}
             aria-label="Enable coach automix"
-            onCheckedChange={(enabled) => {
-              if (enabled) void startAutomix(outId)
-              else if (automix.active) stopAutomix()
-              else engine?.cancelAuto()
-            }}
+            onCheckedChange={toggleAutomix}
           />
         </label>
         <div
@@ -617,18 +640,7 @@ export function TransitionCoach() {
                 !engine ||
                 (!running && (!plan || out.loading || incoming.loading))
               }
-              onClick={() =>
-                running
-                  ? automix.active
-                    ? stopAutomix()
-                    : engine?.cancelAuto()
-                  : plan &&
-                    void engine?.startAuto(
-                      outId,
-                      plan,
-                      outCue === null && inCue === null
-                    )
-              }
+              onClick={mixNow}
             >
               <Icon name={running ? "stop" : "shuffle"} size={14} />
               {running
@@ -707,10 +719,13 @@ export function TransitionCoach() {
           <Button
             variant="ghost"
             size="icon"
-            aria-label="Hide transition coach"
+            aria-label={
+              compact ? "Close Automix controls" : "Hide transition coach"
+            }
             onClick={() => {
               setDetails(false)
-              setCoachOpen(false)
+              if (compact) setSheetOpen(false)
+              else setCoachOpen(false)
             }}
           >
             <Icon name="close" size={16} />
@@ -746,6 +761,9 @@ export function TransitionCoach() {
                 plan?.name ||
                 "No transition yet"}
             </strong>
+            <VocalChip
+              clash={(state.auto ? state.autoPlan : plan)?.vocalClash}
+            />
             <span>{countdown}</span>
           </div>
           <div
@@ -845,6 +863,128 @@ export function TransitionCoach() {
       </div>
     </Card>
   )
+  if (!compact) return panel
+  const lane = {
+    "--approach": `${approach * 100}%`,
+    "--mix": `${Math.min(1, Math.max(0, progress)) * 100}%`,
+  } as CSSProperties
+  return createPortal(
+    sheetOpen ? (
+      <>
+        <div
+          className="automix-sheet-backdrop"
+          onClick={() => setSheetOpen(false)}
+          aria-hidden="true"
+        />
+        <div
+          className="automix-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Automix controls"
+        >
+          <button
+            type="button"
+            className="automix-sheet-handle"
+            aria-label="Close Automix controls"
+            onClick={() => setSheetOpen(false)}
+          />
+          {panel}
+        </div>
+      </>
+    ) : (
+      <div className="automix-dock" role="region" aria-label="Automix">
+        <button
+          type="button"
+          className="automix-dock-summary"
+          aria-label="Open Automix controls"
+          aria-haspopup="dialog"
+          onClick={() => setSheetOpen(true)}
+        >
+          <span className="automix-status" data-tone={status.tone}>
+            <span className="status-dot" />
+            {status.label}
+          </span>
+          <span className="automix-dock-text">
+            <strong>
+              {state.auto
+                ? (state.autoPlan?.name ?? plan?.name) || "Mixing"
+                : nextTitle}
+            </strong>
+            <small>
+              {countdown
+                ? `${outId} → ${inId} · ${countdown}`
+                : `${outId} → ${inId}`}
+              <VocalChip
+                clash={(state.auto ? state.autoPlan : plan)?.vocalClash}
+              />
+            </small>
+          </span>
+          <span
+            className="automix-lane automix-dock-lane"
+            data-mixing={state.auto || undefined}
+            style={lane}
+            aria-hidden="true"
+          >
+            <span className="lane-approach" />
+            <span className="lane-mix" />
+          </span>
+          <Icon name="down" size={14} className="automix-dock-chevron" />
+        </button>
+        <Switch
+          checked={running}
+          disabled={!engine || (!running && blocked)}
+          aria-label="Enable coach automix"
+          onCheckedChange={toggleAutomix}
+        />
+        {!midi.connected && (
+          <Button
+            size="icon-sm"
+            variant={running ? "outline" : "default"}
+            className={running ? "coach-stop-auto" : "coach-mix-now"}
+            disabled={
+              !engine ||
+              (!running && (!plan || out.loading || incoming.loading))
+            }
+            aria-label={running ? "Stop automix" : "Mix now"}
+            title={running ? "Stop automix" : "Mix now"}
+            onClick={mixNow}
+          >
+            <Icon name={running ? "stop" : "shuffle"} size={16} />
+          </Button>
+        )}
+      </div>
+    ),
+    document.body
+  )
+}
+
+/** Vocal overlap of the planned mix: clear, some, or a clash. */
+function VocalChip({ clash }: { clash: number | null | undefined }) {
+  if (clash === null || clash === undefined) return null
+  const percent = Math.round(clash * 100)
+  const tone = clash < 0.08 ? "good" : clash < 0.25 ? "ok" : "poor"
+  return (
+    <span
+      className="vocal-chip"
+      data-fit={tone}
+      title="Estimated overlap of vocals or lead melodies during this mix"
+    >
+      {tone === "good" ? "Vocals clear" : `Vocal clash ${percent}%`}
+    </span>
+  )
+}
+
+/** True on phones and tablets (≤ 900 px wide); false during server render. */
+function useCompactLayout() {
+  const [compact, setCompact] = useState(false)
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 900px)")
+    const changed = () => setCompact(query.matches)
+    changed()
+    query.addEventListener("change", changed)
+    return () => query.removeEventListener("change", changed)
+  }, [])
+  return compact
 }
 
 function CoachDetails({

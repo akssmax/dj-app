@@ -19,7 +19,11 @@ import { DeckFX, DeckTools } from "./performance-tools"
 import { formatTime } from "@/lib/dj/tracks"
 import { deckOutputWarning, effectiveDeckRate } from "@/lib/dj/engine"
 import type { DeckId } from "@/lib/dj/types"
-import { ChannelCue, ControllerControls } from "./controller-controls"
+import {
+  ChannelCue,
+  ControllerControls,
+  MixerOptions,
+} from "./controller-controls"
 import { PerformancePads } from "./performance-pads"
 import { transitionAnnotations } from "@/lib/dj/cue-suggestions"
 import { TRACK_DRAG_TYPE } from "@/lib/dj/mix-fit"
@@ -485,7 +489,7 @@ export function Mixer() {
     <Card className="mixer">
       <div className="mixer-heading">
         <span className="eyebrow">MIXER</span>
-        <Icon name="settings" size={14} />
+        <MixerOptions />
       </div>
       <div className="mixer-channels">
         {(["A", "B"] as DeckId[]).map((id) => (

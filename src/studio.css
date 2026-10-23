@@ -743,6 +743,8 @@ html .app-shell .topbar-actions > .theme-selector {
 html .app-shell .topbar .session-actions {
   display: flex;
   flex: none;
+  width: auto;
+  margin: 0;
   flex-wrap: nowrap;
   gap: 6px;
   padding: 3px;
@@ -826,7 +828,7 @@ html .app-shell .topbar .midi-status {
 }
 
 /* ── Sidebar ───────────────────────────────────────────────────────────── */
-html .app-shell .sidebar {
+html :is(.app-shell .sidebar, .mobile-navigation) {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -839,7 +841,7 @@ html .app-shell .sidebar {
   border-inline-end: 1px solid
     color-mix(in srgb, var(--border) 70%, transparent);
 }
-html .app-shell .sidebar .brand {
+html :is(.app-shell .sidebar, .mobile-navigation) .brand {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -848,7 +850,7 @@ html .app-shell .sidebar .brand {
   font-weight: 700;
   letter-spacing: -0.03em;
 }
-html .app-shell .sidebar .brand-symbol {
+html :is(.app-shell .sidebar, .mobile-navigation) .brand-symbol {
   display: grid;
   place-items: center;
   width: 34px;
@@ -864,8 +866,8 @@ html .app-shell .sidebar .brand-symbol {
   );
   box-shadow: 0 6px 18px -8px var(--primary);
 }
-html .app-shell .sidebar .workspace-label,
-html .app-shell .sidebar .sidebar-section-label {
+html :is(.app-shell .sidebar, .mobile-navigation) .workspace-label,
+html :is(.app-shell .sidebar, .mobile-navigation) .sidebar-section-label {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -875,7 +877,7 @@ html .app-shell .sidebar .sidebar-section-label {
   letter-spacing: 0.08em;
   color: var(--muted-foreground);
 }
-html .app-shell .sidebar .workspace-label {
+html :is(.app-shell .sidebar, .mobile-navigation) .workspace-label {
   margin-top: 0;
 }
 .workspace-badge {
@@ -884,13 +886,15 @@ html .app-shell .sidebar .workspace-label {
   border-radius: 6px;
   background: var(--screen);
 }
-html .app-shell .sidebar :is(.main-nav, .collection-nav) {
+html
+  :is(.app-shell .sidebar, .mobile-navigation)
+  :is(.main-nav, .collection-nav) {
   display: flex;
   flex-direction: column;
   gap: 2px;
   margin: 0;
 }
-html .app-shell .sidebar .nav-item {
+html :is(.app-shell .sidebar, .mobile-navigation) .nav-item {
   position: relative;
   justify-content: flex-start;
   width: 100%;
@@ -906,23 +910,23 @@ html .app-shell .sidebar .nav-item {
   background: transparent;
   box-shadow: none;
 }
-html .app-shell .sidebar .nav-item svg {
+html :is(.app-shell .sidebar, .mobile-navigation) .nav-item svg {
   width: 18px;
   height: 18px;
 }
-html .app-shell .sidebar .nav-item:hover {
+html :is(.app-shell .sidebar, .mobile-navigation) .nav-item:hover {
   color: var(--foreground);
   background: color-mix(in srgb, var(--tile) 60%, transparent);
 }
-html .app-shell .sidebar .nav-item.nav-active {
+html :is(.app-shell .sidebar, .mobile-navigation) .nav-item.nav-active {
   color: var(--foreground);
   background: var(--tile);
   box-shadow: var(--tile-shadow);
 }
-html .app-shell .sidebar .nav-item.nav-active svg {
+html :is(.app-shell .sidebar, .mobile-navigation) .nav-item.nav-active svg {
   color: var(--primary);
 }
-html .app-shell .sidebar .nav-item.nav-active::before {
+html :is(.app-shell .sidebar, .mobile-navigation) .nav-item.nav-active::before {
   content: "";
   position: absolute;
   inset-inline-start: -12px;
@@ -932,17 +936,17 @@ html .app-shell .sidebar .nav-item.nav-active::before {
   border-radius: 0 3px 3px 0;
   background: var(--primary);
 }
-html .app-shell .sidebar .nav-label {
+html :is(.app-shell .sidebar, .mobile-navigation) .nav-label {
   display: inline;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-html .app-shell .sidebar .nav-active-dot {
+html :is(.app-shell .sidebar, .mobile-navigation) .nav-active-dot {
   display: none;
 }
-html .app-shell .sidebar .nav-count {
+html :is(.app-shell .sidebar, .mobile-navigation) .nav-count {
   min-width: 22px;
   padding: 0 6px;
   border-radius: 7px;
@@ -953,7 +957,7 @@ html .app-shell .sidebar .nav-count {
   color: var(--muted-foreground);
   background: var(--screen);
 }
-html .app-shell .sidebar .new-badge {
+html :is(.app-shell .sidebar, .mobile-navigation) .new-badge {
   height: 18px;
   min-height: 18px;
   padding: 0 6px;
@@ -963,14 +967,14 @@ html .app-shell .sidebar .new-badge {
   color: var(--primary-foreground);
   background: var(--primary);
 }
-html .app-shell .sidebar .sidebar-bottom {
+html :is(.app-shell .sidebar, .mobile-navigation) .sidebar-bottom {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin-top: auto;
   padding-top: 16px;
 }
-html .app-shell .sidebar .controller-card {
+html :is(.app-shell .sidebar, .mobile-navigation) .controller-card {
   display: block;
   padding: 14px;
   border-radius: 16px;
@@ -983,25 +987,28 @@ html .app-shell .sidebar .controller-card {
     ),
     var(--screen);
 }
-html .app-shell .sidebar .controller-card .controller-top {
+html
+  :is(.app-shell .sidebar, .mobile-navigation)
+  .controller-card
+  .controller-top {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
   color: var(--primary);
 }
-html .app-shell .sidebar .controller-card strong {
+html :is(.app-shell .sidebar, .mobile-navigation) .controller-card strong {
   display: block;
   font-size: 14px;
   line-height: 1.3;
 }
-html .app-shell .sidebar .controller-card p {
+html :is(.app-shell .sidebar, .mobile-navigation) .controller-card p {
   margin: 3px 0 12px;
   font-size: 12px;
   line-height: 1.4;
   color: var(--muted-foreground);
 }
-html .app-shell .sidebar .controller-card button {
+html :is(.app-shell .sidebar, .mobile-navigation) .controller-card button {
   width: 100%;
   height: 34px;
   min-height: 34px;
@@ -1009,25 +1016,28 @@ html .app-shell .sidebar .controller-card button {
   border-radius: 10px;
   font-size: 13px;
 }
-html .app-shell .sidebar .sidebar-profile {
+html :is(.app-shell .sidebar, .mobile-navigation) .sidebar-profile {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 6px 0;
   border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
-html .app-shell .sidebar .sidebar-profile > div {
+html :is(.app-shell .sidebar, .mobile-navigation) .sidebar-profile > div {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
   font-size: 13px;
 }
-html .app-shell .sidebar .sidebar-profile span:not(.profile-avatar) {
+html
+  :is(.app-shell .sidebar, .mobile-navigation)
+  .sidebar-profile
+  span:not(.profile-avatar) {
   font-size: 12px;
   color: var(--muted-foreground);
 }
-html .app-shell .sidebar .profile-avatar {
+html :is(.app-shell .sidebar, .mobile-navigation) .profile-avatar {
   display: grid;
   place-items: center;
   width: 32px;
@@ -1094,9 +1104,9 @@ html .app-shell .sidebar .sidebar-profile > div > * {
   text-overflow: ellipsis;
 }
 
-/* Fullscreen: the decks take the whole screen. Covers the app's fullscreen
-   button (data-fullscreen / :fullscreen) and browser or OS fullscreen
-   (display-mode), which the Fullscreen API does not report. */
+/* App fullscreen (the fullscreen button) gives the decks the whole screen.
+   Browser/OS fullscreen is left alone: many DJs keep the window fullscreen
+   all the time and still need the sidebar. */
 html:is([data-fullscreen], :fullscreen) .app-shell.app-shell {
   grid-template-columns: minmax(0, 1fr);
 }
@@ -1104,14 +1114,6 @@ html:is([data-fullscreen], :fullscreen)
   .app-shell
   :is(.sidebar, .sidebar-toggle) {
   display: none;
-}
-@media (display-mode: fullscreen) {
-  html .app-shell.app-shell {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  html .app-shell :is(.sidebar, .sidebar-toggle) {
-    display: none;
-  }
 }
 
 /* ── Library table: tight rows, mix fit, sortable headers ───────────────── */
@@ -1128,7 +1130,7 @@ html .library-browser .track-table-panel {
 html .library-browser .track-table-panel table {
   table-layout: fixed;
   width: 100%;
-  min-width: 520px;
+  min-width: 0;
 }
 @container tracks (max-width: 1030px) {
   html .library-browser .track-table-panel .energy-cell {
@@ -1514,4 +1516,525 @@ html .library-browser .energy-rating [data-slot="button"] {
 .save-kind [aria-checked="true"] {
   border-color: var(--primary);
   color: var(--primary);
+}
+
+/* Phones: the sidebar becomes the slide-in menu behind the header button. */
+@media (max-width: 620px) {
+  html .app-shell .sidebar {
+    display: none;
+  }
+  html .app-shell.app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Phones: one column for the Automix flow and its controls. */
+@media (max-width: 620px) {
+  .compact-coach.automix-bar {
+    padding: 12px;
+    border-radius: 18px;
+  }
+  .automix-toolbar {
+    gap: 8px;
+  }
+  .automix-toolbar .automix-energy {
+    flex: 1 1 100%;
+  }
+  .automix-energy button {
+    flex: 1;
+    justify-content: center;
+  }
+  .automix-toolbar .automix-picker {
+    flex: 1 1 100%;
+  }
+  .automix-toolbar .automix-picker [data-slot="select-trigger"] {
+    flex: 1;
+    width: auto;
+  }
+  .automix-flow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .automix-bridge {
+    order: 0;
+    grid-column: auto;
+  }
+  .automix-bridge-foot {
+    flex-wrap: wrap;
+  }
+  .automix-guidance {
+    white-space: normal;
+  }
+}
+
+/* ── Phones: decks, mixer and library sized for one thumb ───────────────── */
+@media (max-width: 620px) {
+  html .deck .deck-metrics {
+    grid-template-columns: 1fr 0.8fr 1.2fr;
+    gap: 6px;
+  }
+  html
+    .deck
+    :is(.deck-metrics strong, .deck-metrics .key-value, .deck-time strong) {
+    font-size: 22px;
+  }
+  html .deck .deck-metrics .key-value small,
+  html .deck .deck-time small {
+    display: none;
+  }
+  .scrolling-caption {
+    display: none;
+  }
+  .deck-screen .scrolling-waveform {
+    height: 96px;
+  }
+
+  /* Mixer: knobs in one row, then CUE beside a short fader. */
+  html .mixer .mixer-channel {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: center;
+    gap: 8px 4px;
+    padding-bottom: 14px;
+  }
+  html .mixer .mixer-channel > .channel-label {
+    grid-column: 1 / -1;
+  }
+  html .mixer .mixer-channel > [data-slot="button"] {
+    grid-column: 1 / 3;
+    justify-self: center;
+  }
+  html .mixer .mixer-channel > .channel-fader {
+    grid-column: 3 / -1;
+    justify-self: center;
+    height: 120px;
+  }
+
+  /* Library: actions wrap to a full-width row; table drops to essentials. */
+  html .library-panel .section-heading {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  html .library-panel .library-import-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+  html
+    .library-panel
+    .library-import-actions
+    > [data-slot="button"]:first-child {
+    grid-column: 1 / -1;
+  }
+  html .library-panel .library-import-actions > [data-slot="button"] {
+    flex: 1;
+    min-width: 0;
+  }
+  html .library-browser .track-table-panel table {
+    min-width: 0;
+  }
+  html .library-browser .track-table-panel .number-cell {
+    width: 22px;
+  }
+  html .library-browser .track-table-panel :is(.track-name-cell, .load-cell) {
+    position: static;
+    width: auto;
+    min-width: 0;
+  }
+  html .library-browser .track-table-panel :is(th, td) {
+    padding: 0 3px;
+  }
+  html .library-browser .load-buttons {
+    gap: 3px;
+  }
+  html .library-browser .load-buttons button {
+    width: 26px;
+    min-width: 26px;
+    height: 28px;
+    min-height: 28px;
+  }
+  html .library-browser .track-table-panel .row-check {
+    display: none;
+  }
+  html .library-browser .track-table-panel .load-cell {
+    width: 62px;
+  }
+  html .library-browser .track-table-panel .bpm-cell {
+    width: 50px;
+  }
+  html .library-browser .track-table-panel .key-cell {
+    width: 44px;
+  }
+  html .library-browser .library-track .artwork {
+    display: none;
+  }
+  html .library-browser .track-table-panel th .sort-divider,
+  html
+    .library-browser
+    .track-table-panel
+    th
+    .table-sort[aria-label^="Sort by artist"] {
+    display: none;
+  }
+  .mixable-toggle .mixable-reference {
+    display: none;
+  }
+  html .library-browser .track-table-panel th.number-cell .table-sort {
+    display: none;
+  }
+  /* Collections become one swipeable row of chips. */
+  html .library-panel .folder-browser {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    max-height: none;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    border: 0;
+    scrollbar-width: none;
+  }
+  html
+    .library-panel
+    .folder-browser
+    > :is(.folder-browser-label, .folder-empty) {
+    display: none;
+  }
+  html .library-panel .folder-browser [data-slot="button"] {
+    flex: none;
+    width: auto;
+    min-height: 34px;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: var(--tile);
+  }
+  html
+    .library-panel
+    .folder-browser
+    [data-slot="button"][aria-current="page"] {
+    color: var(--primary-foreground);
+    background: var(--primary);
+  }
+}
+
+/* Narrow tables (phones, tablets, split windows): essentials only, compact. */
+@container tracks (max-width: 560px) {
+  html .library-browser .track-table-panel :is(th, td) {
+    padding: 0 3px;
+  }
+  html .library-browser .track-table-panel :is(.track-name-cell, .load-cell) {
+    position: static;
+  }
+  html .library-browser .track-table-panel .track-name-cell {
+    width: auto;
+    min-width: 0;
+  }
+  html .library-browser .track-table-panel .number-cell {
+    width: 24px;
+  }
+  html .library-browser .track-table-panel th.number-cell .table-sort,
+  html .library-browser .track-table-panel .row-check,
+  html .library-browser .library-track .artwork,
+  html .library-browser .track-table-panel th .sort-divider,
+  html
+    .library-browser
+    .track-table-panel
+    th
+    .table-sort[aria-label^="Sort by artist"] {
+    display: none;
+  }
+  html .library-browser .track-table-panel .load-cell {
+    width: 62px;
+  }
+  html .library-browser .track-table-panel .bpm-cell {
+    width: 52px;
+  }
+  html .library-browser .track-table-panel .key-cell {
+    width: 46px;
+  }
+  html .library-browser .load-buttons {
+    gap: 3px;
+  }
+  html .library-browser .load-buttons button {
+    width: 26px;
+    min-width: 26px;
+    height: 28px;
+    min-height: 28px;
+  }
+}
+
+/* ── Compact Automix (≤ 900 px): floating dock + bottom sheet ───────────── */
+.automix-dock {
+  position: fixed;
+  z-index: 40;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  max-width: 620px;
+  margin-inline: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 10px;
+  border-radius: 18px;
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  box-shadow:
+    0 18px 40px -12px color-mix(in srgb, var(--shadow) 80%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent);
+  backdrop-filter: blur(16px);
+  animation: dock-in 220ms ease-out;
+}
+.automix-dock-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "status text chevron"
+    "lane lane lane";
+  align-items: center;
+  gap: 6px 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  text-align: start;
+  border-radius: 12px;
+}
+.automix-dock-summary:focus-visible {
+  outline: 2px solid var(--ring);
+}
+.automix-dock-summary .automix-status {
+  grid-area: status;
+}
+.automix-dock-text {
+  grid-area: text;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+.automix-dock-text strong,
+.automix-dock-text small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.automix-dock-text strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.automix-dock-text small {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.automix-dock-chevron {
+  grid-area: chevron;
+  color: var(--muted-foreground);
+  transform: rotate(180deg);
+}
+.automix-dock-lane {
+  grid-area: lane;
+  height: 4px;
+}
+.automix-dock [data-slot="switch"] {
+  flex: none;
+}
+.automix-dock [data-slot="button"] {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 12px;
+}
+.automix-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: color-mix(in srgb, var(--shadow) 45%, transparent);
+  backdrop-filter: blur(2px);
+  animation: fade-in 160ms ease-out;
+}
+.automix-sheet {
+  position: fixed;
+  z-index: 46;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-width: 720px;
+  max-height: 86vh;
+  margin-inline: auto;
+  overflow-y: auto;
+  padding: 6px 8px calc(10px + env(safe-area-inset-bottom));
+  border-radius: 24px 24px 0 0;
+  background: var(--background);
+  box-shadow: 0 -18px 50px -10px
+    color-mix(in srgb, var(--shadow) 80%, transparent);
+  animation: sheet-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.automix-sheet-handle {
+  display: block;
+  width: 44px;
+  height: 5px;
+  margin: 4px auto 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted-foreground) 45%, transparent);
+}
+.automix-sheet .compact-coach.automix-bar {
+  margin: 0;
+  box-shadow: none;
+}
+@keyframes dock-in {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+}
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (max-width: 900px) {
+  /* Keep the last controls clear of the floating dock. */
+  html .app-shell .workspace-content {
+    padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .automix-dock,
+  .automix-sheet,
+  .automix-sheet-backdrop {
+    animation: none;
+  }
+}
+
+/* ── Phone navigation drawer ─────────────────────────────────────────────
+   The dialog base centers itself with translate(-50%, -50%) and zooms in;
+   the drawer pins to the left edge at full height and slides instead. */
+html .mobile-navigation.mobile-navigation {
+  position: fixed;
+  inset: 0 auto 0 0;
+  translate: none;
+  transform: none;
+  width: min(300px, 86vw) !important;
+  max-width: none !important;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  padding: calc(16px + env(safe-area-inset-top)) 14px
+    calc(14px + env(safe-area-inset-bottom));
+  gap: 2px;
+  overflow-y: auto;
+  border: 0;
+  border-inline-end: 1px solid
+    color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 0 22px 22px 0;
+  background: var(--sidebar);
+  box-shadow: 24px 0 60px -20px
+    color-mix(in srgb, var(--shadow) 80%, transparent);
+  animation: drawer-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+html .mobile-navigation.mobile-navigation[data-closed] {
+  animation: drawer-out 160ms ease-in forwards;
+}
+html .mobile-navigation .nav-item {
+  height: 44px;
+  min-height: 44px;
+}
+html .mobile-navigation .nav-item.nav-active::before {
+  inset-inline-start: -14px;
+}
+html .mobile-navigation .sidebar-bottom {
+  margin-top: auto;
+  padding-top: 16px;
+}
+html .mobile-navigation [data-slot="dialog-close"] {
+  top: calc(14px + env(safe-area-inset-top));
+  right: 12px;
+}
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+@keyframes drawer-out {
+  to {
+    transform: translateX(-100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html .mobile-navigation.mobile-navigation,
+  html .mobile-navigation.mobile-navigation[data-closed] {
+    animation: none;
+  }
+}
+
+/* Mixer header: assist pills + options menu (replaces the inline buttons). */
+html .mixer .mixer-heading {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  text-align: start;
+}
+.mixer-options {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.mixer-assist {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+}
+.mixer-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mixer-option-text small {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+html .mixer .controller-controls {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+/* Vocal overlap of the planned mix */
+.vocal-chip {
+  flex: none;
+  margin-inline-start: auto;
+  margin-inline-end: 6px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  border: 1px solid color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+.vocal-chip[data-fit="good"] {
+  color: var(--fit-good);
+  border-color: color-mix(in srgb, var(--fit-good) 40%, transparent);
+}
+.vocal-chip[data-fit="poor"] {
+  color: var(--vocal);
+  border-color: color-mix(in srgb, var(--vocal) 50%, transparent);
+}
+.automix-dock-text small .vocal-chip {
+  margin-inline-start: 6px;
+  padding: 0 5px;
+  font-size: 10px;
 }

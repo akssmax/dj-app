@@ -31,7 +31,8 @@ export function useLibraryAnalysis(
     const next = tracks.find(
       (t) =>
         libraryAnalyzable(t) &&
-        !t.analysis &&
+        // Older analyses lack vocal/phrase structure; refresh them too.
+        (!t.analysis || !t.analysis.vocals) &&
         !attempted.current.has(linkedFingerprint(t))
     )
     if (!next) return

@@ -541,7 +541,8 @@ export class DJEngine {
         this.state[id].track = detailed
         this.onAnalysis?.(detailed)
       }
-      if (this.state[id].track.analysis && !this.state[id].track.analysis.bands)
+      const loadedAnalysis = this.state[id].track.analysis
+      if (loadedAnalysis && (!loadedAnalysis.bands || !loadedAnalysis.vocals))
         this.backfillBands(id, buffer, version)
       this.state[id].loading = false
       this.applyChannel(id)
@@ -694,6 +695,8 @@ export class DJEngine {
 
   /** Tracks analyzed before 3-band waveforms existed get their band levels
    * from the analysis worker, keeping the ~1 s of filtering off the UI thread. */
+  /** Tracks analyzed by an older version get band levels and structure
+   * (vocals, sections, phrases) from the worker, off the UI thread. */
   private backfillBands(id: DeckId, buffer: AudioBuffer, version: number) {
     let worker: Worker
     try {
@@ -706,7 +709,12 @@ export class DJEngine {
     const done = () => worker.terminate()
     worker.onerror = done
     worker.onmessage = (
-      event: MessageEvent<Pick<Analysis, "peaks" | "bands">>
+      event: MessageEvent<
+        Pick<
+          Analysis,
+          "peaks" | "bands" | "vocals" | "sections" | "phraseOffset"
+        >
+      >
     ) => {
       done()
       const deck = this.state[id],
@@ -714,16 +722,12 @@ export class DJEngine {
       if (
         this.channels[id]?.loadVersion !== version ||
         !analysis ||
-        analysis.bands
+        (analysis.bands && analysis.vocals)
       )
         return
       deck.track = {
         ...deck.track!,
-        analysis: {
-          ...analysis,
-          peaks: event.data.peaks,
-          bands: event.data.bands,
-        },
+        analysis: { ...analysis, ...event.data },
       }
       this.onAnalysis?.(deck.track)
       this.publish()
@@ -731,8 +735,15 @@ export class DJEngine {
     const channels = Array.from({ length: buffer.numberOfChannels }, (_, c) =>
       buffer.getChannelData(c).slice()
     )
+    const track = this.state[id].track
     worker.postMessage(
-      { channels, sampleRate: buffer.sampleRate, waveformOnly: true },
+      {
+        channels,
+        sampleRate: buffer.sampleRate,
+        waveformOnly: true,
+        bpm: track?.bpm ?? null,
+        beatOffset: beatOffset(track),
+      },
       channels.map((samples) => samples.buffer)
     )
   }
