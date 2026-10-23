@@ -13,6 +13,7 @@ const uniformNames = [
   "uTravel",
   "uFlash",
   "uEnergy",
+  "uMix",
   "uPal",
   "uSpec",
 ] as const
@@ -21,8 +22,11 @@ type Program = {
   uniforms: Record<(typeof uniformNames)[number], WebGLUniformLocation | null>
 }
 
+/** What to draw: one scene, or `to` dissolving in over `from` by `mix`. */
+export type SceneView = { from: number; to: number; mix: number }
+
 /**
- * Draws one full-screen shader per frame. Resolution adapts: when frames
+ * Draws one full-screen shader per frame, two while scenes dissolve. Resolution adapts: when frames
  * arrive late for the display's refresh rate the render scale drops (down
  * to half), and creeps back up once there is headroom again.
  */
@@ -30,7 +34,6 @@ export class VisualRenderer {
   private gl: WebGLRenderingContext
   private programs = new Map<number, Program>()
   private texture: WebGLTexture | null = null
-  private scene = 0
   private scale = 1
   private refresh = 1000 / 60
   private average = 1000 / 60
@@ -40,8 +43,8 @@ export class VisualRenderer {
 
   constructor(private canvas: HTMLCanvasElement) {
     const options = { antialias: false, alpha: false, depth: false }
-    const gl =
-      canvas.getContext("webgl2", options) ?? canvas.getContext("webgl", options)
+    const gl = (canvas.getContext("webgl2", options) ??
+      canvas.getContext("webgl", options)) as WebGLRenderingContext | null
     if (!gl) throw new Error("WebGL is not available in this browser.")
     this.gl = gl
     canvas.addEventListener("webglcontextlost", this.onLost)
@@ -53,12 +56,8 @@ export class VisualRenderer {
     return this.scale
   }
 
-  setScene(index: number) {
-    this.scene = ((index % scenes.length) + scenes.length) % scenes.length
-  }
-
   /** `interval` is the time since the previous frame in ms. */
-  render(frame: VisualFrame, time: number, interval: number) {
+  render(frame: VisualFrame, view: SceneView, time: number, interval: number) {
     if (this.lost) return
     this.adapt(interval)
     const gl = this.gl,
@@ -70,8 +69,6 @@ export class VisualRenderer {
       this.canvas.height = height
     }
     gl.viewport(0, 0, width, height)
-    const { program, uniforms: u } = this.program(this.scene)
-    gl.useProgram(program)
     gl.bindTexture(gl.TEXTURE_2D, this.texture)
     gl.texSubImage2D(
       gl.TEXTURE_2D,
@@ -84,6 +81,28 @@ export class VisualRenderer {
       gl.UNSIGNED_BYTE,
       frame.spectrum
     )
+    gl.disable(gl.BLEND)
+    this.draw(view.from, 1, frame, time, width, height)
+    if (view.mix > 0 && view.to !== view.from) {
+      // The incoming scene writes its dissolve mask to alpha.
+      gl.enable(gl.BLEND)
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+      this.draw(view.to, view.mix, frame, time, width, height)
+    }
+  }
+
+  private draw(
+    index: number,
+    mix: number,
+    frame: VisualFrame,
+    time: number,
+    width: number,
+    height: number
+  ) {
+    const gl = this.gl,
+      { program, uniforms: u } = this.program(index)
+    gl.useProgram(program)
+    gl.uniform1f(u.uMix, mix)
     gl.uniform2f(u.uRes, width, height)
     gl.uniform1f(u.uTime, time)
     gl.uniform1f(u.uPulse, frame.pulse)
@@ -105,7 +124,8 @@ export class VisualRenderer {
     for (const { program } of this.programs.values())
       this.gl.deleteProgram(program)
     this.programs.clear()
-    this.gl.getExtension("WEBGL_lose_context")?.loseContext()
+    this.gl.deleteTexture(this.texture)
+    // No loseContext(): a remount (React dev double effects) reuses this canvas.
   }
 
   private adapt(interval: number) {

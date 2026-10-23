@@ -65,7 +65,10 @@ export function logSpectrum(
     const from = Math.max(1, Math.floor((40 * 400 ** (i / out.length)) / hz)),
       to = Math.max(
         from + 1,
-        Math.min(bins.length, Math.floor((40 * 400 ** ((i + 1) / out.length)) / hz))
+        Math.min(
+          bins.length,
+          Math.floor((40 * 400 ** ((i + 1) / out.length)) / hz)
+        )
       )
     let peak = 0
     for (let j = from; j < to; j++) peak = Math.max(peak, bins[j])
@@ -118,8 +121,7 @@ export class VisualDriver {
     )
     const weight = (id: DeckId) => deckMixGain(state, id)
     const lead = decks.sort((a, b) => weight(b) - weight(a))[0] as
-      | DeckId
-      | undefined
+      DeckId | undefined
     frame.playing = !!lead
 
     // Bands: normalised against a slowly decaying peak so quiet and loud
@@ -132,7 +134,11 @@ export class VisualDriver {
       high: heard ? bandLevel(this.fft, sampleRate, 5000, 14000) : 0,
     }
     for (const band of ["bass", "mid", "high"] as const) {
-      this.peaks[band] = Math.max(bands[band], this.peaks[band] - dt * 0.04, 0.2)
+      this.peaks[band] = Math.max(
+        bands[band],
+        this.peaks[band] - dt * 0.04,
+        0.2
+      )
       const level = bands[band] / this.peaks[band]
       frame[band] = follow(frame[band], level, level > frame[band] ? 30 : 5, dt)
     }

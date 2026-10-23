@@ -8,6 +8,11 @@ import { Icon } from "@/components/dj/icons"
 import { LibraryTransport } from "@/components/dj/library-transport"
 
 const Decks = lazy(() => import("@/components/dj/performance-layout"))
+const Visualizer = lazy(() =>
+  import("@/components/dj/visualizer").then((module) => ({
+    default: module.Visualizer,
+  }))
+)
 const ParallelWaveforms = lazy(() =>
   import("@/components/dj/parallel-waveforms").then((module) => ({
     default: module.ParallelWaveforms,
@@ -23,6 +28,21 @@ function Studio() {
       <div className="studio-loading" role="status">
         Opening your saved library…
       </div>
+    )
+  if (layout === "visual")
+    return (
+      <>
+        <Suspense
+          fallback={
+            <p className="muted" role="status">
+              Loading visuals…
+            </p>
+          }
+        >
+          <Visualizer />
+        </Suspense>
+        <LibraryTransport />
+      </>
     )
   return (
     <>

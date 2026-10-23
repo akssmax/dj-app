@@ -31,8 +31,8 @@ export function paletteForCamelot(camelot: string | null | undefined) {
 export function linearPalette(index: number, out = new Float32Array(12)) {
   palettes[index].colors.forEach((hex, i) => {
     for (let c = 0; c < 3; c++)
-      out[i * 3 + c] = ((parseInt(hex.slice(1 + c * 2, 3 + c * 2), 16) / 255) **
-        2.2)
+      out[i * 3 + c] =
+        (parseInt(hex.slice(1 + c * 2, 3 + c * 2), 16) / 255) ** 2.2
   })
   return out
 }

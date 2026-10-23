@@ -58,4 +58,4 @@ export type ThemeId = (typeof themes)[number]["id"]
 
 const lightThemes: readonly ThemeId[] = ["daylight", "pastel", "matcha"]
 export const isLightTheme = (theme: ThemeId) => lightThemes.includes(theme)
-export type StudioLayout = "mix" | "parallel" | "library"
+export type StudioLayout = "mix" | "parallel" | "library" | "visual"

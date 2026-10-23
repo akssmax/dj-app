@@ -356,6 +356,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <TabsTrigger value="mix">Mixer</TabsTrigger>
                     <TabsTrigger value="parallel">Parallel</TabsTrigger>
                     <TabsTrigger value="library">Library</TabsTrigger>
+                    <TabsTrigger value="visual">Visuals</TabsTrigger>
                   </TabsList>
                 </Tabs>
               )}
