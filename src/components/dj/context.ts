@@ -51,6 +51,8 @@ export type DJContextValue = {
   scanningFolder: string | null
   libraryAnalysis: {
     activeId: string | null
+    /** Every track being analysed now (a few run at once). */
+    activeIds: string[]
     errors: Record<string, string>
     retry: (id?: string) => void
   }

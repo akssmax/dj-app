@@ -44,19 +44,35 @@ const pct = (v: number) => `${Math.round(v * 100)}%`
 it("analysis accuracy", { timeout: 1_800_000 }, async () => {
   const rows: Row[] = []
   const model = await beatModel()
-  const methods = model ? (["dsp", "model"] as const) : (["dsp"] as const)
+  // dsp: signal processing only; model: always the beat model; auto: the
+  // app's default, the model only when the fast grid is unsure.
+  const methods = model
+    ? (["dsp", "model", "auto"] as const)
+    : (["dsp"] as const)
+  const run = (
+    method: "dsp" | "model" | "auto",
+    channels: Float32Array[],
+    sampleRate: number
+  ) =>
+    method === "dsp"
+      ? Promise.resolve(analyzeAudio(channels, sampleRate))
+      : analyzeTrack(
+          channels,
+          sampleRate,
+          async () => model,
+          method === "model" ? Infinity : undefined
+        )
+  const prefix = { dsp: "", model: "model/", auto: "auto/" }
+  const ccPrefix = { dsp: "cc:", model: "cc-model:", auto: "cc-auto:" }
   for (const method of methods)
     for (const spec of benchSpecs) {
       const { channels, sampleRate, truth } = synthTrack(spec)
       const started = performance.now()
-      const analysis =
-        method === "model"
-          ? await analyzeTrack(channels, sampleRate, model)
-          : analyzeAudio(channels, sampleRate)
+      const analysis = await run(method, channels, sampleRate)
       const seconds = (performance.now() - started) / 1000
       const grid = predictedGrid(analysis, channels[0].length / sampleRate)
       rows.push({
-        name: `${method === "model" ? "model/" : ""}${spec.name}`,
+        name: `${prefix[method]}${spec.name}`,
         tempo: tempoScore(analysis.bpm, truth.bpm),
         beatF: fMeasure(grid.beats, truth.beats),
         downbeatF: fMeasure(grid.downbeats, truth.downbeats),
@@ -76,12 +92,9 @@ it("analysis accuracy", { timeout: 1_800_000 }, async () => {
       if (!existsSync(path)) continue
       const { channels, sampleRate } = await decodeMp3(path)
       const started = performance.now()
-      const analysis =
-        method === "model"
-          ? await analyzeTrack(channels, sampleRate, model)
-          : analyzeAudio(channels, sampleRate)
+      const analysis = await run(method, channels, sampleRate)
       rows.push({
-        name: `cc${method === "model" ? "-model" : ""}:${basename(track.url)}`,
+        name: `${ccPrefix[method]}${basename(track.url)}`,
         tempo: tempoScore(analysis.bpm, track.bpm!),
         seconds: (performance.now() - started) / 1000,
         detail: `bpm ${analysis.bpm} (published ${track.bpm}) · key ${analysis.camelot} · grid ${analysis.gridConfidence} · ${analysis.method}`,
@@ -132,11 +145,16 @@ it("analysis accuracy", { timeout: 1_800_000 }, async () => {
   }
   const groups = {
     synthetic: rows.filter(
-      (r) => !r.name.includes(":") && !r.name.startsWith("model/")
+      (r) =>
+        !r.name.includes(":") &&
+        !r.name.startsWith("model/") &&
+        !r.name.startsWith("auto/")
     ),
     "synthetic (model)": rows.filter((r) => r.name.startsWith("model/")),
+    "synthetic (auto)": rows.filter((r) => r.name.startsWith("auto/")),
     "cc tracks": rows.filter((r) => r.name.startsWith("cc:")),
     "cc tracks (model)": rows.filter((r) => r.name.startsWith("cc-model:")),
+    "cc tracks (auto)": rows.filter((r) => r.name.startsWith("cc-auto:")),
     giantsteps: rows.filter((r) => r.name.startsWith("gs:")),
   }
   console.log(

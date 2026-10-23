@@ -193,22 +193,37 @@ export function analyzeAudio(
 }
 
 /**
- * Analysis with the beat-tracking model when one is available: its beats
- * and downbeats set the grid, and the signal-processing grid is the
+ * Signal-processing grids at or above this confidence keep their result
+ * without the beat model. On the bench every demo track at 0.76 or more had
+ * the exact tempo, and every miss sat below 0.70; the model costs about two
+ * thirds of analysis time.
+ */
+export const DSP_TRUST = 0.75
+
+/**
+ * Analysis that runs the fast signal-processing grid first and calls the
+ * beat-tracking model only when that grid is unsure (live drums, swing,
+ * unclear downbeats). `getModel` loads the model on first use; pass
+ * `trust = Infinity` to always use it. The signal-processing grid is the
  * fallback if the model fails or finds too few beats.
  */
 export async function analyzeTrack(
   channels: Float32Array[],
   sampleRate: number,
-  beatModel?: BeatModelRun
+  getModel?: () => Promise<BeatModelRun | undefined>,
+  trust = DSP_TRUST
 ): Promise<Analysis> {
-  if (beatModel)
-    try {
-      const tracked = await trackBeats(channels, sampleRate, beatModel)
+  const quick = analyzeAudio(channels, sampleRate)
+  if (!getModel || (quick.gridConfidence ?? 0) >= trust) return quick
+  try {
+    const model = await getModel()
+    if (model) {
+      const tracked = await trackBeats(channels, sampleRate, model)
       if (tracked.beats.length >= 16)
         return analyzeAudio(channels, sampleRate, tracked)
-    } catch {
-      /* Fall back to signal processing below. */
     }
-  return analyzeAudio(channels, sampleRate)
+  } catch {
+    /* Keep the signal-processing result. */
+  }
+  return quick
 }

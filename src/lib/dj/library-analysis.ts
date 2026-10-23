@@ -27,7 +27,41 @@ export async function libraryAudio(
   throw new Error("This track has no audio source to analyze.")
 }
 
-// One file at a time; decoding never starts playback or replaces a deck.
+/**
+ * How many tracks the library analyses at once: one worker per two cores,
+ * up to three, and one on low-memory devices (each job holds a decoded
+ * track, about 85 MB for four minutes of stereo).
+ */
+export function analysisConcurrency() {
+  if (typeof navigator === "undefined") return 1
+  const cores = navigator.hardwareConcurrency || 2
+  const memory = (navigator as { deviceMemory?: number }).deviceMemory ?? 8
+  if (memory < 4) return 1
+  return Math.max(1, Math.min(3, Math.floor(cores / 2)))
+}
+
+/**
+ * Analysis workers kept between tracks, so the WebAssembly runtime and the
+ * beat model load once per worker instead of once per track.
+ */
+const idleWorkers: Worker[] = []
+const takeWorker = () =>
+  idleWorkers.pop() ??
+  new Worker(new URL("./analysis.worker.ts", import.meta.url), {
+    type: "module",
+  })
+const returnWorker = (worker: Worker) => {
+  worker.onmessage = worker.onerror = worker.onmessageerror = null
+  if (idleWorkers.length < analysisConcurrency()) idleWorkers.push(worker)
+  else worker.terminate()
+}
+
+/** Stop and forget the idle analysis workers (tests, and page teardown). */
+export function releaseAnalysisWorkers() {
+  for (const worker of idleWorkers.splice(0)) worker.terminate()
+}
+
+// Decoding never starts playback or replaces a deck.
 export async function analyzeLibraryTrack(
   track: Track,
   signal: AbortSignal,
@@ -42,20 +76,20 @@ export async function analyzeLibraryTrack(
   const context = new OfflineAudioContext(1, 1, 44100)
   const buffer = await context.decodeAudioData(await file.arrayBuffer())
   signal.throwIfAborted()
+  const { duration, sampleRate } = buffer
   const analysis = await new Promise<Analysis>((resolve, reject) => {
-    const worker = new Worker(
-      new URL("./analysis.worker.ts", import.meta.url),
-      {
-        type: "module",
-      }
-    )
-    const cleanup = () => {
+    const worker = takeWorker()
+    let finished = false
+    const cleanup = (keep: boolean) => {
+      finished = true
       clearTimeout(timer)
       signal.removeEventListener("abort", abort)
-      worker.terminate()
+      if (keep) returnWorker(worker)
+      else worker.terminate()
     }
     const fail = (error: Error) => {
-      cleanup()
+      // A worker that failed or was cancelled mid-track is not reused.
+      cleanup(false)
       reject(error)
     }
     const abort = () =>
@@ -70,25 +104,37 @@ export async function analyzeLibraryTrack(
     )
     signal.addEventListener("abort", abort, { once: true })
     worker.onmessage = (event: MessageEvent<Analysis>) => {
-      cleanup()
+      if (finished) return
+      cleanup(true)
       resolve({ ...event.data, analyzedAt: new Date().toISOString() })
     }
     worker.onerror = () => fail(new Error("Audio analysis failed. Try again."))
     worker.onmessageerror = () =>
       fail(new Error("Could not read analysis. Try again."))
     try {
+      // Nothing plays this buffer, so hand its audio to the worker instead
+      // of copying it.
       const channels = Array.from({ length: buffer.numberOfChannels }, (_, c) =>
-        buffer.getChannelData(c).slice()
+        buffer.getChannelData(c)
       )
-      worker.postMessage(
-        { channels, sampleRate: buffer.sampleRate, useModels },
-        channels.map((c) => c.buffer)
-      )
+      try {
+        worker.postMessage(
+          { channels, sampleRate, useModels },
+          channels.map((c) => c.buffer)
+        )
+      } catch {
+        // A browser that won't detach audio-buffer memory gets a copy.
+        const copies = channels.map((c) => c.slice())
+        worker.postMessage(
+          { channels: copies, sampleRate, useModels },
+          copies.map((c) => c.buffer)
+        )
+      }
     } catch (error) {
       fail(error instanceof Error ? error : new Error(String(error)))
     }
   })
-  return { analysis, duration: buffer.duration }
+  return { analysis, duration }
 }
 
 export function mergeLibraryAnalysis(

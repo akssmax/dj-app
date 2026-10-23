@@ -509,6 +509,8 @@ export function Library() {
               <span>
                 Analyzing{" "}
                 {tracks.find((t) => t.id === libraryAnalysis.activeId)?.title}
+                {libraryAnalysis.activeIds.length > 1 &&
+                  ` and ${libraryAnalysis.activeIds.length - 1} more`}
               </span>
               <span>Metadata saves automatically</span>
             </div>
@@ -752,7 +754,7 @@ export function Library() {
                     isFavorite={favoriteIds.has(track.id)}
                     inQueue={queueIds.has(track.id)}
                     ready={ready}
-                    analyzing={track.id === libraryAnalysis.activeId}
+                    analyzing={libraryAnalysis.activeIds.includes(track.id)}
                     analysisError={libraryAnalysis.errors[track.id]}
                     loadTrack={loadTrack}
                     favorite={favorite}

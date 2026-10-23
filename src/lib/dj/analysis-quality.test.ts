@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest"
-import { analyzeAudio } from "./analyze"
+import { describe, expect, it, vi } from "vitest"
+import { analyzeAudio, analyzeTrack } from "./analyze"
 import { synthTrack } from "../../../scripts/bench/synth"
 import type { SynthSpec } from "../../../scripts/bench/synth"
 
@@ -82,4 +82,24 @@ describe("sections", () => {
     for (const boundary of [0, 1, 3, 4].map((i) => truth.boundaries[i]))
       expect(found.some((t) => Math.abs(t - boundary) < bar)).toBe(true)
   }, 20000)
+})
+
+describe("beat model gating", () => {
+  it("skips the model when the fast grid is confident, and can force it", async () => {
+    const { channels, sampleRate, truth } = synthTrack({
+      name: "house-126-F",
+      bpm: 126,
+      root: 5,
+      mode: "major",
+    })
+    const getModel = vi.fn(async () => undefined)
+    const quick = await analyzeTrack(channels, sampleRate, getModel)
+    expect(quick.gridConfidence ?? 0).toBeGreaterThanOrEqual(0.75)
+    expect(getModel).not.toHaveBeenCalled()
+    expect(quick.bpm).toBe(truth.bpm)
+    // Forcing the model loads it; with none available the fast grid stays.
+    const forced = await analyzeTrack(channels, sampleRate, getModel, Infinity)
+    expect(getModel).toHaveBeenCalledOnce()
+    expect(forced.bpm).toBe(truth.bpm)
+  })
 })

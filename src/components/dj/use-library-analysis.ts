@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
+  analysisConcurrency,
   analyzeLibraryTrack,
   libraryAnalyzable,
   linkedFingerprint,
@@ -14,64 +15,73 @@ export function useLibraryAnalysis(
   save: (original: Track, analyzed: Track) => void,
   useModels = true
 ) {
-  const [activeId, setActiveId] = useState<string | null>(null)
+  const [activeIds, setActiveIds] = useState<string[]>([])
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [revision, setRevision] = useState(0)
   const tracksRef = useRef(tracks)
   tracksRef.current = tracks
   const attempted = useRef(new Set<string>())
-  const job = useRef<AbortController | null>(null)
+  // Tracks being analysed now, by track id; a few run side by side.
+  const jobs = useRef(new Map<string, AbortController>())
   useEffect(
     () => () => {
-      job.current?.abort()
-      job.current = null
+      for (const job of jobs.current.values()) job.abort()
+      jobs.current.clear()
     },
     []
   )
   useEffect(() => {
-    if (!ready || job.current) return
-    const next = tracks.find(
-      (t) =>
-        libraryAnalyzable(t) &&
-        // Older analyses lack vocal/phrase structure or the current tempo,
-        // grid and key analysis; refresh them too.
-        (!t.analysis || !t.analysis.vocals || analysisOutdated(t.analysis)) &&
-        !attempted.current.has(linkedFingerprint(t))
-    )
-    if (!next) return
-    const controller = new AbortController()
-    job.current = controller
-    setActiveId(next.id)
-    setErrors((prior) =>
-      Object.fromEntries(Object.entries(prior).filter(([id]) => id !== next.id))
-    )
-    attempted.current.add(linkedFingerprint(next))
-    void analyzeLibraryTrack(next, controller.signal, useModels)
-      .then((result) => {
-        if (!controller.signal.aborted)
-          save(
-            next,
-            mergeLibraryAnalysis(next, result.analysis, result.duration)
-          )
-      })
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted)
-          setErrors((prior) => ({
-            ...prior,
-            [next.id]:
-              error instanceof Error
-                ? error.message
-                : "Analysis failed. Try again.",
-          }))
-        else attempted.current.delete(linkedFingerprint(next))
-      })
-      .finally(() => {
-        if (job.current !== controller) return
-        job.current = null
-        setActiveId(null)
-        setRevision((value) => value + 1)
-      })
-  }, [tracks, ready, revision, save])
+    if (!ready) return
+    const limit = analysisConcurrency()
+    let started = false
+    while (jobs.current.size < limit) {
+      const next = tracks.find(
+        (t) =>
+          libraryAnalyzable(t) &&
+          // Older analyses lack vocal/phrase structure or the current tempo,
+          // grid and key analysis; refresh them too.
+          (!t.analysis || !t.analysis.vocals || analysisOutdated(t.analysis)) &&
+          !attempted.current.has(linkedFingerprint(t)) &&
+          !jobs.current.has(t.id)
+      )
+      if (!next) break
+      started = true
+      const controller = new AbortController()
+      jobs.current.set(next.id, controller)
+      setErrors((prior) =>
+        Object.fromEntries(
+          Object.entries(prior).filter(([id]) => id !== next.id)
+        )
+      )
+      attempted.current.add(linkedFingerprint(next))
+      void analyzeLibraryTrack(next, controller.signal, useModels)
+        .then((result) => {
+          if (!controller.signal.aborted)
+            save(
+              next,
+              mergeLibraryAnalysis(next, result.analysis, result.duration)
+            )
+        })
+        .catch((error: unknown) => {
+          if (!controller.signal.aborted)
+            setErrors((prior) => ({
+              ...prior,
+              [next.id]:
+                error instanceof Error
+                  ? error.message
+                  : "Analysis failed. Try again.",
+            }))
+          else attempted.current.delete(linkedFingerprint(next))
+        })
+        .finally(() => {
+          if (jobs.current.get(next.id) !== controller) return
+          jobs.current.delete(next.id)
+          setActiveIds([...jobs.current.keys()])
+          setRevision((value) => value + 1)
+        })
+    }
+    if (started) setActiveIds([...jobs.current.keys()])
+  }, [tracks, ready, revision, save, useModels])
   const retry = useCallback((id?: string) => {
     for (const track of tracksRef.current)
       if (!id || track.id === id)
@@ -85,5 +95,5 @@ export function useLibraryAnalysis(
     )
     setRevision((value) => value + 1)
   }, [])
-  return { activeId, errors, retry }
+  return { activeId: activeIds[0] ?? null, activeIds, errors, retry }
 }

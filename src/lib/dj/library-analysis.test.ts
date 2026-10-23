@@ -4,6 +4,7 @@ import {
   linkedFingerprint,
   mergeLibraryAnalysis,
   mergeScannedTracks,
+  releaseAnalysisWorkers,
   withDemoAnalysis,
 } from "./library-analysis"
 import { demoTracks } from "./tracks"
@@ -49,7 +50,10 @@ const track = (): Track => ({
   },
 })
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  releaseAnalysisWorkers()
+  vi.unstubAllGlobals()
+})
 describe("background library analysis", () => {
   it("keeps analysis completed during a folder scan, but clears it for changed files", () => {
     const scanned = track()
@@ -92,8 +96,9 @@ describe("background library analysis", () => {
       })
     ).not.toBe(linkedFingerprint(original))
   })
-  it("decodes without starting audio, records the result, and terminates its worker", async () => {
-    const terminate = vi.fn()
+  it("decodes without starting audio, records the result, and reuses its worker", async () => {
+    const terminate = vi.fn(),
+      created = vi.fn()
     const decode = vi.fn(async () => ({
       duration: 120,
       numberOfChannels: 1,
@@ -111,6 +116,9 @@ describe("background library analysis", () => {
       class {
         terminate = terminate
         onmessage?: (event: { data: Analysis }) => void
+        constructor() {
+          created()
+        }
         postMessage() {
           queueMicrotask(() => this.onmessage?.({ data: analysis }))
         }
@@ -123,6 +131,11 @@ describe("background library analysis", () => {
     expect(result.duration).toBe(120)
     expect(result.analysis.analyzedAt).toBeTruthy()
     expect(decode).toHaveBeenCalledOnce()
+    // The worker stays loaded for the next track instead of starting over.
+    expect(terminate).not.toHaveBeenCalled()
+    await analyzeLibraryTrack(track(), new AbortController().signal)
+    expect(created).toHaveBeenCalledOnce()
+    releaseAnalysisWorkers()
     expect(terminate).toHaveBeenCalledOnce()
   })
   it("cancels an active worker and does not analyze files without read permission", async () => {

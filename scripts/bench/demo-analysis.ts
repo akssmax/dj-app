@@ -22,7 +22,13 @@ it("demo analysis", { timeout: 1_800_000 }, async () => {
   const out: Record<string, { duration: number; analysis: Analysis }> = {}
   for (const track of demoTracks) {
     const { channels, sampleRate } = await decodeMp3(`public${track.url}`)
-    const analysis = await analyzeTrack(channels, sampleRate, model)
+    // Bundled demos always get the model's answer.
+    const analysis = await analyzeTrack(
+      channels,
+      sampleRate,
+      async () => model,
+      Infinity
+    )
     out[track.id] = {
       duration: channels[0].length / sampleRate,
       analysis: { ...analysis, analyzedAt: new Date().toISOString() },

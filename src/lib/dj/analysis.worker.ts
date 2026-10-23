@@ -7,8 +7,11 @@ import { loadModel, MODELS } from "./models"
 // avoids needing cross-origin isolation.
 ort.env.wasm.numThreads = 1
 
-/** The beat-tracking model, or undefined when it can't load (offline). */
-async function beatModel(): Promise<BeatModelRun | undefined> {
+/** The beat-tracking model, or undefined when it can't load (offline).
+ * Loaded once per worker: library workers are reused across tracks. */
+let model: Promise<BeatModelRun | undefined> | undefined
+const beatModel = () => (model ??= loadBeatModel())
+async function loadBeatModel(): Promise<BeatModelRun | undefined> {
   try {
     const session = await ort.InferenceSession.create(
       await loadModel(MODELS.beats),
@@ -57,6 +60,7 @@ self.onmessage = async (
     )
     return
   }
-  const model = event.data.useModels === false ? undefined : await beatModel()
-  self.postMessage(await analyzeTrack(channels, sampleRate, model))
+  // The model loads only if analysis asks for it (uncertain grids).
+  const getModel = event.data.useModels === false ? undefined : beatModel
+  self.postMessage(await analyzeTrack(channels, sampleRate, getModel))
 }
