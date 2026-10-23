@@ -6,7 +6,7 @@ export type DirectorInput = {
   auto: boolean
   drop: boolean
   phrase: boolean
-  /** Progress of an engine (Automix) transition, null when none runs. */
+  /** Progress of a running engine (Automix) transition, null when none runs. */
   transition: number | null
   /** Energy 1–10 of the track coming in during a transition. */
   incomingEnergy: number | null
@@ -42,6 +42,8 @@ export class SceneDirector {
   readonly view: SceneView
   private seconds: number | null = null
   private following = false
+  /** A pick during a transition holds until that transition ends. */
+  private skipTransition = false
   private phrases = 0
 
   constructor(
@@ -57,13 +59,15 @@ export class SceneDirector {
   }
 
   select(index: number) {
+    this.skipTransition = this.following
     this.following = false
     this.fadeTo(index, 1.2)
   }
 
   update(dt: number, input: DirectorInput) {
     const view = this.view
-    if (input.auto && input.transition !== null) {
+    if (input.transition === null) this.skipTransition = false
+    if (input.auto && input.transition !== null && !this.skipTransition) {
       if (!this.following) {
         this.settle()
         this.following = true

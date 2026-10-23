@@ -50,6 +50,18 @@ describe("SceneDirector", () => {
     director.update(0.7, { ...quiet, auto: false })
     expect(director.view).toEqual({ from: 3, to: 3, mix: 0 })
   })
+  it("lets a manual pick win over a running transition until it ends", () => {
+    const director = new SceneDirector(0, () => 0)
+    director.update(0.016, { ...quiet, transition: 0.3, incomingEnergy: 9 })
+    director.select(9)
+    for (let i = 0; i < 100; i++)
+      director.update(0.016, { ...quiet, transition: 0.3 + i * 0.005 })
+    expect(director.view).toEqual({ from: 9, to: 9, mix: 0 })
+    // The next transition follows the mix again.
+    director.update(0.016, quiet)
+    director.update(0.016, { ...quiet, transition: 0.5 })
+    expect(director.view.mix).toBeGreaterThan(0)
+  })
   it("keeps the scene through transitions when Auto is off", () => {
     const director = new SceneDirector(2)
     director.update(0.016, { ...quiet, auto: false, transition: 0.5 })

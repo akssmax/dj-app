@@ -78,7 +78,12 @@ export function Visualizer() {
       show.update(dt, {
         auto: live.current.auto,
         ...events,
-        transition: state.auto && state.autoOut ? state.transition : null,
+        // Automix arms the next transition long before it starts (progress 0
+        // while it waits for the exit zone); only a running one leads.
+        transition:
+          state.auto && state.autoOut && state.transition > 0
+            ? state.transition
+            : null,
         incomingEnergy: state[incoming].track?.energy ?? null,
         energy: state[lead].track?.energy ?? null,
       })
