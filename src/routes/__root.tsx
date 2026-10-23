@@ -13,7 +13,7 @@ import studioCss from "../studio.css?url"
 import marketingCss from "../marketing.css?url"
 
 // Public pages render without the audio engine or studio shell.
-const marketingRoutes = new Set(["/home", "/roadmap"])
+const marketingRoutes = new Set(["/", "/home", "/roadmap"])
 
 export const Route = createRootRoute({
   head: () => ({

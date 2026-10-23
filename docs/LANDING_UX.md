@@ -1,4 +1,4 @@
-# Landing page UX architecture (`/home`)
+# Landing page UX architecture (`/`)
 
 ## Audience
 
@@ -35,7 +35,7 @@ Each section has one job:
 
 ## Rules
 
-- **One main action everywhere:** "Start mixing" opens the studio at `/`. Second actions change by section: Watch Automix, Start a lesson, Roadmap.
+- **One main action everywhere:** "Start mixing" opens the studio at `/app`. Second actions change by section: Watch Automix, Start a lesson, Roadmap.
 - **Real UI, not mockups:** the screenshots come from the running studio (`scripts/capture-marketing.mjs`). Re-run the script when the UI changes.
 - **Show before telling:** each concept appears as UI or animation before it's explained.
 - **Motion:** the Automix player and the waveform hero animate. Both honor `prefers-reduced-motion`, which shows a static end state instead.

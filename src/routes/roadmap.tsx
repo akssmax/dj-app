@@ -203,10 +203,10 @@ function RoadmapPage() {
           <span className="site-eyebrow">You are on {APP_VERSION}</span>
           <h2>Try the beta and tell us what to build next.</h2>
           <div className="site-actions">
-            <Link to="/" className="site-btn site-btn-primary site-btn-lg">
+            <Link to="/app" className="site-btn site-btn-primary site-btn-lg">
               Open the studio
             </Link>
-            <Link to="/home" className="site-btn site-btn-lg">
+            <Link to="/" className="site-btn site-btn-lg">
               Back to overview
             </Link>
           </div>

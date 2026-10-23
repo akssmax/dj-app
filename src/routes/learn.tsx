@@ -243,7 +243,7 @@ function Learn() {
                 variant="outline"
                 onClick={() =>
                   midi.connected
-                    ? void navigate({ to: "/" })
+                    ? void navigate({ to: "/app" })
                     : void connectMidi()
                 }
               >

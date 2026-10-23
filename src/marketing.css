@@ -1,4 +1,4 @@
-/* Public pages (/home, /roadmap). Brand tokens are documented in docs/BRAND.md. */
+/* Public pages (/, /roadmap). Brand tokens are documented in docs/BRAND.md. */
 @import "@fontsource-variable/geist";
 
 @font-face {
@@ -741,7 +741,7 @@
   color: var(--text);
 }
 
-/* ---------- Landing page sections (/home) ---------- */
+/* ---------- Landing page sections (/) ---------- */
 
 .site-skip {
   position: absolute;

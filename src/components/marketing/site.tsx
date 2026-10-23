@@ -45,20 +45,20 @@ export function SiteLayout({
       </a>
       <header className="site-header">
         <div className="site-wrap site-header-inner">
-          <Link to="/home" className="site-brand" aria-label="Cue home">
+          <Link to="/" className="site-brand" aria-label="Cue home">
             <CueWordmark size={28} />
           </Link>
           <ReleaseChip />
           <nav className="site-nav" aria-label="Main">
-            <a href="/home#automix">Automix</a>
-            <a href="/home#features">Features</a>
-            <a href="/home#themes">Themes</a>
-            <a href="/home#compare">Compare</a>
+            <a href="/#automix">Automix</a>
+            <a href="/#features">Features</a>
+            <a href="/#themes">Themes</a>
+            <a href="/#compare">Compare</a>
             <Link to="/roadmap" activeProps={{ "aria-current": "page" }}>
               Roadmap
             </Link>
           </nav>
-          <Link to="/" className="site-btn site-btn-primary site-header-cta">
+          <Link to="/app" className="site-btn site-btn-primary site-header-cta">
             Start mixing
           </Link>
         </div>
@@ -84,7 +84,7 @@ function SiteFooter({ palette }: { palette: readonly [string, string] }) {
             on your computer.
           </p>
           <div className="site-actions site-actions-start">
-            <Link to="/" className="site-btn site-btn-primary site-btn-lg">
+            <Link to="/app" className="site-btn site-btn-primary site-btn-lg">
               Start mixing
             </Link>
             <Link to="/learn" className="site-btn site-btn-lg">
@@ -95,16 +95,16 @@ function SiteFooter({ palette }: { palette: readonly [string, string] }) {
         <div className="footer-links">
           <nav aria-label="Product">
             <h3>Product</h3>
-            <Link to="/">DJ studio</Link>
+            <Link to="/app">DJ studio</Link>
             <Link to="/learn">Learn to mix</Link>
-            <a href="/home#automix">Automix</a>
-            <a href="/home#themes">Themes</a>
+            <a href="/#automix">Automix</a>
+            <a href="/#themes">Themes</a>
           </nav>
           <nav aria-label="Project">
             <h3>Project</h3>
             <Link to="/roadmap">Roadmap</Link>
-            <a href="/home#compare">Compare</a>
-            <a href="/home#features">Features</a>
+            <a href="/#compare">Compare</a>
+            <a href="/#features">Features</a>
           </nav>
           <nav aria-label="Credits">
             <h3>Credits</h3>

@@ -30,7 +30,7 @@ const page = await browser.newPage({
   viewport: { width: 1600, height: 1000 },
   deviceScaleFactor: 1.5,
 })
-await page.goto(base + "/", { waitUntil: "networkidle" })
+await page.goto(base + "/app", { waitUntil: "networkidle" })
 await page.waitForSelector("section.performance-grid", { timeout: 30000 })
 // Both decks must finish analysis, or the shots show "Analyzing…" placeholders.
 await page.waitForFunction(

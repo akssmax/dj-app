@@ -10,7 +10,7 @@ pnpm install
 pnpm dev
 ```
 
-Open <http://localhost:3000>. The development server is currently available at <http://127.0.0.1:3000>.
+Open <http://localhost:3000> for the landing page and <http://localhost:3000/app> for the DJ studio. `/learn` is Learn & Play, `/roadmap` the roadmap; old `/home` links redirect to `/`.
 
 ```sh
 pnpm typecheck
@@ -29,7 +29,7 @@ NITRO_PRESET=vercel pnpm build
 node scripts/verify-vercel-build.mjs
 ```
 
-The check verifies `/`, `/learn`, referenced client assets, bundled audio and the application’s unknown-route response. Generated `.vercel` and `.output` directories stay out of Git and source lint/format checks.
+The check verifies `/`, `/app`, `/learn`, `/roadmap`, referenced client assets, bundled audio and the application’s unknown-route response. Generated `.vercel` and `.output` directories stay out of Git and source lint/format checks.
 
 ## Working features
 

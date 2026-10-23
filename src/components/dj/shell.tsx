@@ -119,7 +119,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const library = (tab: string) => {
     setMobileNavOpen(false)
     setLibraryTab(tab)
-    void navigate({ to: "/" })
+    void navigate({ to: "/app" })
   }
   if (!ready)
     return (
@@ -129,7 +129,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     )
   const sidebarContent = (
     <>
-      <Link className="brand" to="/" aria-label="Cue studio">
+      <Link className="brand" to="/app" aria-label="Cue studio">
         <span className="brand-symbol">
           <CueMark size={24} />
         </span>
@@ -149,12 +149,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       <nav className="main-nav">
         <Button
           variant="ghost"
-          className={`nav-item ${pathname === "/" ? "nav-active" : ""}`}
+          className={`nav-item ${pathname === "/app" ? "nav-active" : ""}`}
           nativeButton={false}
           aria-label="DJ studio"
           title={sidebarCollapsed ? "DJ studio" : undefined}
           onClick={() => setMobileNavOpen(false)}
-          render={<Link to="/" />}
+          render={<Link to="/app" />}
         >
           <Icon name="activity" />
           <span className="nav-label">DJ studio</span>
@@ -346,7 +346,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   {pathname === "/learn" ? "Learn to mix" : "DJ studio"}
                 </strong>
               </div>
-              {pathname === "/" && (
+              {pathname === "/app" && (
                 <Tabs
                   className="topbar-layout"
                   value={layout}
