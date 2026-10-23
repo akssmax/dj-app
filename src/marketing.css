@@ -166,9 +166,35 @@
 .site-header-cta {
   margin-inline-start: auto;
 }
+.site-github {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-inline-start: auto;
+  border-radius: 10px;
+  color: var(--dim);
+  transition:
+    color 0.15s,
+    background 0.15s;
+}
+.site-github:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.site-github:focus-visible {
+  outline: 2px solid var(--deck-a);
+  outline-offset: 2px;
+}
+.site-github + .site-header-cta {
+  margin-inline-start: 4px;
+}
 @media (min-width: 820px) {
   .site-nav {
     display: flex;
+  }
+  .site-github {
+    margin-inline-start: 4px;
   }
   .site-header-cta {
     margin-inline-start: 8px;
