@@ -402,7 +402,7 @@ export function exitTarget(
 ): number | null {
   if (pace === "full") return null
   const bar = 240 / (track.bpm || 120)
-  const minimum = position + (pace === "quick" ? 40 : 75)
+  const minimum = position + (pace === "quick" ? 30 : 60)
   const drops = labelSections(track).filter(
     (s) => s.label === "drop" && s.end - bar * 8 > position && s.end >= minimum
   )
@@ -411,12 +411,12 @@ export function exitTarget(
   const fallback =
     position +
     (pace === "quick"
-      ? Math.min(120, Math.max(50, remaining * 0.35))
-      : Math.min(240, Math.max(90, remaining * 0.55)))
+      ? Math.min(90, Math.max(45, remaining * 0.3))
+      : Math.min(180, Math.max(75, remaining * 0.5)))
   // A drop that runs for minutes (flat masters, one long groove) would keep
   // the track on to its outro: cap the play time like a DJ watching the
-  // clock (about 2 minutes quick, 4 minutes DJ pace).
-  const cap = position + (pace === "quick" ? 120 : 240)
+  // clock (about 1½ minutes quick, 3 minutes DJ pace).
+  const cap = position + (pace === "quick" ? 90 : 180)
   return Math.min(
     latest,
     Math.max(minimum, Math.min(cap, pick?.end ?? fallback))
@@ -518,7 +518,10 @@ export function planTransitions(
             !!incoming.camelot &&
             !pitchChanges)) &&
         (d.id !== "long" ||
-          (harmonic >= 0.8 && profile.longBars !== null && multiple === 1))
+          (harmonic >= 0.8 &&
+            profile.longBars !== null &&
+            multiple === 1 &&
+            pace !== "quick"))
     )
     .flatMap((d): Transition[] => {
       const lesson = techniques.find((t) => t.id === d.lesson)!,
@@ -533,11 +536,13 @@ export function planTransitions(
           : ["blend", "bass", "harmonic"].includes(d.id)
             ? profile.blendBars
             : d.bars
+      // Quick sets swap tracks fast: overlaps stay at 8 bars or less.
+      const paceBars = pace === "quick" ? Math.min(styleBars, 8) : styleBars
       const requested =
         d.execution === "cut"
           ? 0.08 * mixOutRate
           : Math.min(
-              (d.execution === "fade" && match ? 8 : styleBars) * 4 * beat,
+              (d.execution === "fade" && match ? 8 : paceBars) * 4 * beat,
               match && multiple !== 1 ? 8 * 4 * beat : Infinity
             )
       let duration = Math.min(
@@ -557,6 +562,15 @@ export function planTransitions(
           ? out.duration * 0.55
           : Math.min(target - phrase * 2, latest)
       )
+      // Shorter paces keep the exit near the target: penalties for vocals
+      // or drops may move it by a phrase, never back to the outro.
+      const exitLatest =
+        target === null
+          ? latest
+          : Math.max(
+              earliest,
+              Math.min(latest, target + phrase * (pace === "quick" ? 0.5 : 1))
+            )
       const inLength = duration * rate
       const short = duration < beat * 8
       // Outro first: leave after the last high-energy phrase, so the mix
@@ -576,12 +590,12 @@ export function planTransitions(
         (short ? 0 : overlapWith(out, "drop", t, duration) * 1.5)
       const fallbackExit = Math.max(
         position,
-        offset + Math.floor((latest - offset) / phrase) * phrase
+        offset + Math.floor((exitLatest - offset) / phrase) * phrase
       )
       const exits =
         outCue !== null
           ? [{ t: outCue, cost: 0 }]
-          : candidateStarts(out, offset, phrase, earliest, latest)
+          : candidateStarts(out, offset, phrase, earliest, exitLatest)
               .map((t) => ({ t, cost: exitCost(t) }))
               .sort((x, y) => x.cost - y.cost)
               .slice(0, 6)
@@ -656,7 +670,7 @@ export function planTransitions(
             inStart = enter.t
           }
         }
-      outStart = outCue ?? Math.min(latest, outStart)
+      outStart = outCue ?? Math.min(exitLatest, outStart)
       const clash = vocalClash(out, outStart, incoming, inStart, duration, rate)
       // What an 8-bar blend at these points would stack: short exits earn
       // that back, because they avoid the overlap a blend would cause.
@@ -703,11 +717,13 @@ export function planTransitions(
               ? 69
               : 60
       const intentBonus =
-        intent === "lift" && ["cut", "bass", "filter"].includes(d.id)
+        (intent === "lift" && ["cut", "bass", "filter"].includes(d.id)
           ? 8
           : intent === "ease" && ["long", "reverb", "blend"].includes(d.id)
             ? 8
-            : 0
+            : 0) +
+        // Quick sets favour fast handovers: echo outs and cuts.
+        (pace === "quick" && ["cut", "echo"].includes(d.id) ? 6 : 0)
       const score = Math.round(
         Math.min(
           98,
@@ -945,7 +961,8 @@ function structuralTransitions(
   const earliest =
     target === null
       ? Math.max(position + 1, out.duration * 0.4)
-      : Math.max(position + 30, target - c.beat * 4 * 48)
+      : Math.max(position + 30, target - c.beat * 4 * 32)
+  const latestStart = target === null ? out.duration : target + c.beat * 4 * 16
   const nearest = <T extends { start: number }>(list: T[]) =>
     target === null
       ? list.at(-1)
@@ -1051,6 +1068,7 @@ function structuralTransitions(
       (s) =>
         s.label === "drop" &&
         s.start >= earliest &&
+        s.start <= latestStart &&
         s.start <= out.duration - c.beat * 16
     )
   )
@@ -1074,6 +1092,7 @@ function structuralTransitions(
     (s) =>
       s.label === "breakdown" &&
       s.start >= earliest &&
+      s.start <= latestStart &&
       s.end - s.start >= c.beat * 32 &&
       s.end <= out.duration - 1
   )
@@ -1083,7 +1102,7 @@ function structuralTransitions(
   for (const down of chosenBreakdown ? [chosenBreakdown] : []) {
     if (!c.canMatch || !inDrop) break
     const bars = Math.min(
-      32,
+      c.pace === "quick" ? 8 : 32,
       Math.floor((down.end - down.start) / (c.beat * 32)) * 8
     )
     const duration = bars * 4 * c.beat
@@ -1106,7 +1125,10 @@ function structuralTransitions(
   // Breakdown crossover: no shared beat, so tempos may differ freely.
   const quiet = chosenBreakdown
   if (quiet) {
-    const duration = Math.min(quiet.end - quiet.start, 16 * 4 * c.beat)
+    const duration = Math.min(
+      quiet.end - quiet.start,
+      (c.pace === "quick" ? 8 : 16) * 4 * c.beat
+    )
     build("crossover", "Breakdown crossover", "fade", "fade", {
       outStart: quiet.start,
       inStart: c.firstEntry,

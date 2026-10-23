@@ -168,9 +168,10 @@ describe("mix pace", () => {
   it("aims for the end of the first or second drop", () => {
     const track = arranged("a")
     expect(exitTarget(track, 0, "full", 230)).toBeNull()
-    expect(exitTarget(track, 0, "quick", 230)).toBe(100)
-    expect(exitTarget(track, 0, "dj", 230)).toBe(200)
-    // Entered mid-track: plays at least 75 s before a DJ-pace exit.
+    // Capped at about 1½ minutes quick and 3 minutes DJ pace.
+    expect(exitTarget(track, 0, "quick", 230)).toBe(90)
+    expect(exitTarget(track, 0, "dj", 230)).toBe(180)
+    // Entered mid-track: the second drop after the entry ends at 200 s.
     expect(exitTarget(track, 40, "dj", 230)).toBe(200)
   })
   it("mixes out mid-track at quick pace instead of in the outro", () => {
@@ -184,6 +185,20 @@ describe("mix pace", () => {
     expect(quick.outStart).toBeLessThan(140)
     expect(quick.outStart).toBeLessThan(full.outStart)
     expect(quick.reasons.join(" ")).toContain("quick pace")
+    // Quick overlaps stay at 8 bars or less, with no long blends.
+    const plans = planTransitions(arranged("a"), arranged("b"), 0, {
+      pace: "quick",
+    })
+    expect(plans.some((p) => p.id === "long")).toBe(false)
+    for (const p of plans) expect(p.bars).toBeLessThanOrEqual(8)
+  })
+  it("keeps quick and DJ exits near the target, never in the outro", () => {
+    const track = arranged("a")
+    for (const pace of ["quick", "dj"] as const) {
+      const target = exitTarget(track, 0, pace, track.duration)!
+      for (const p of planTransitions(track, arranged("b"), 0, { pace }))
+        expect(p.outStart).toBeLessThanOrEqual(target + 30 + 0.01)
+    }
   })
   it("enters the incoming track so its drop lands as the blend ends", () => {
     const next = arranged("b")
