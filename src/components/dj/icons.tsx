@@ -1,6 +1,7 @@
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
   SidebarLeftIcon,
+  PlugIcon,
   PlayIcon,
   PauseIcon,
   HeadphonesIcon,
@@ -72,6 +73,7 @@ export const icons = {
   download: Download01Icon,
   tick: Tick02Icon,
   maximize: MaximizeScreenIcon,
+  plug: PlugIcon,
   minimize: MinimizeScreenIcon,
 }
 export function Icon({

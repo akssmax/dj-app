@@ -23,6 +23,7 @@ import {
   emptyDeck,
   emptyController,
   effectiveDeckRate,
+  planningRate,
   deckMixGain,
 } from "@/lib/dj/engine"
 import type { EngineState } from "@/lib/dj/engine"
@@ -975,9 +976,10 @@ export function DJProvider({ children }: { children: ReactNode }) {
       outId: outgoingDeck(state),
       a: state.A.track,
       b: state.B.track,
-      aRate: effectiveDeckRate(state.A),
-      bRate: effectiveDeckRate(state.B),
+      aRate: planningRate(state.A),
+      bRate: planningRate(state.B),
       intent: dataRef.current.session.mixIntent,
+      pace: dataRef.current.session.mixPace,
       technique: dataRef.current.session.transitionTechnique,
       cues: dataRef.current.session.transitionCues,
       recent: dataRef.current.session.recentTransitions,
@@ -997,6 +999,7 @@ export function DJProvider({ children }: { children: ReactNode }) {
           outRate: effectiveDeckRate(out),
           incomingRate: effectiveDeckRate(incoming),
           intent: inputs.intent,
+          pace: inputs.pace,
           recent: inputs.recent,
           outCue: inputs.cues[out.track.id]?.exit,
           inCue: inputs.cues[incoming.track.id]?.entry,
@@ -1181,6 +1184,10 @@ export function DJProvider({ children }: { children: ReactNode }) {
       update((db) => ({ ...db, session: { ...db.session, mixIntent } }))
       automixRef.current?.refresh()
     },
+    setMixPace: (mixPace) => {
+      update((db) => ({ ...db, session: { ...db.session, mixPace } }))
+      automixRef.current?.refresh()
+    },
     setTransitionCue: (trackId, role, position) => {
       engineRef.current?.cancelAuto()
       update((db) => ({
@@ -1297,7 +1304,16 @@ export function useEngine<TValue = EngineState>(
   )
 }
 
-export function useTransitionPlan() {
+/**
+ * The planned transition between the decks. Positions are rounded to
+ * `positionStep` seconds (null leaves them out) so components that only show
+ * a countdown don't re-render on every 50 ms engine tick.
+ */
+export function useTransitionPlan({
+  positionStep = 0.25,
+}: { positionStep?: number | null } = {}) {
+  const at = (position: number) =>
+    positionStep ? Math.floor(position / positionStep) * positionStep : 0
   const state = useEngine((current) => ({
       outId: current.autoOut ?? outgoingDeck(current),
       autoPlan: current.autoPlan,
@@ -1306,16 +1322,16 @@ export function useTransitionPlan() {
       aCueLabels: current.A.cueLabels,
       aPlaying: current.A.playing,
       aLoading: current.A.loading,
-      aPosition: current.A.position,
-      aRate: effectiveDeckRate(current.A),
+      aPosition: at(current.A.position),
+      aRate: planningRate(current.A),
       aLow: current.A.low,
       bTrack: current.B.track,
       bCues: current.B.cues,
       bCueLabels: current.B.cueLabels,
       bPlaying: current.B.playing,
       bLoading: current.B.loading,
-      bPosition: current.B.position,
-      bRate: effectiveDeckRate(current.B),
+      bPosition: at(current.B.position),
+      bRate: planningRate(current.B),
       bLow: current.B.low,
     })),
     { database } = useDJ()
@@ -1343,8 +1359,13 @@ export function useTransitionPlan() {
   }
   const out = outId === "A" ? a : b,
     incoming = inId === "A" ? a : b
-  const { mixIntent, transitionTechnique, recentTransitions, transitionCues } =
-    database.session
+  const {
+    mixIntent,
+    mixPace,
+    transitionTechnique,
+    recentTransitions,
+    transitionCues,
+  } = database.session
   const outCue = out.track ? (transitionCues[out.track.id]?.exit ?? null) : null
   const inCue = incoming.track
     ? (transitionCues[incoming.track.id]?.entry ?? null)
@@ -1357,6 +1378,7 @@ export function useTransitionPlan() {
             outRate: out.rate,
             incomingRate: incoming.rate,
             intent: mixIntent,
+            pace: mixPace,
             recent: recentTransitions,
             outCue,
             inCue,
@@ -1368,6 +1390,7 @@ export function useTransitionPlan() {
       out.rate,
       incoming.rate,
       mixIntent,
+      mixPace,
       recentTransitions,
       outCue,
       inCue,

@@ -38,9 +38,24 @@ export const themes = [
   {
     id: "daylight",
     name: "Daylight",
-    description: "Bright paper surfaces · teal + rust decks",
-    swatches: ["#edf1f5", "#0a7c86", "#c4571a"],
+    description: "Sunny cream paper · tangerine + berry decks",
+    swatches: ["#faf6ef", "#e0480f", "#c42d82"],
+  },
+  {
+    id: "pastel",
+    name: "Pastel Pop",
+    description: "Soft lilac candy · violet + pink decks",
+    swatches: ["#faf5fc", "#7c3aed", "#e5337a"],
+  },
+  {
+    id: "matcha",
+    name: "Matcha",
+    description: "Fresh green tea paper · leaf + mango decks",
+    swatches: ["#f3f7ef", "#3d8a1e", "#d97706"],
   },
 ] as const
 export type ThemeId = (typeof themes)[number]["id"]
+
+const lightThemes: readonly ThemeId[] = ["daylight", "pastel", "matcha"]
+export const isLightTheme = (theme: ThemeId) => lightThemes.includes(theme)
 export type StudioLayout = "mix" | "parallel" | "library"

@@ -226,10 +226,24 @@ describe("musical transition planning", () => {
         expect(plan.warnings.some((w) => w.includes("pitch"))).toBe(true)
     }
   })
-  it("avoids forcing a long blend across a large tempo gap", () => {
+  it("mixes 90 into 174 BPM at double time, with short blends only", () => {
     const plans = planTransitions(
       { ...analyzed, bpm: 90 },
       { ...incoming, bpm: 174 }
+    )
+    expect(plans.some((p) => p.id === "long")).toBe(false)
+    const matched = plans.filter((p) => p.beatmatch)
+    expect(matched.length).toBeGreaterThan(0)
+    for (const plan of matched) {
+      expect(plan.tempoRelation).toBe(0.5)
+      expect(plan.duration).toBeLessThanOrEqual((60 / 90) * 32 + 0.01)
+      expect(plan.reasons.join(" ")).toContain("Double-time")
+    }
+  })
+  it("avoids forcing a long blend across an unrelated tempo gap", () => {
+    const plans = planTransitions(
+      { ...analyzed, bpm: 90 },
+      { ...incoming, bpm: 140 }
     )
     expect(plans.map((p) => p.execution).sort()).toEqual([
       "cut",
@@ -1258,6 +1272,36 @@ describe("audio transport and automix lock", () => {
     expect(engine.state.B.rate).toBeCloseTo(1, 5)
     expect(engine.state.auto).toBe(true)
   })
+  it("rides the outgoing tempo up to the next track before a ramped mix", async () => {
+    const out = { ...analyzed, genre: "House", bpm: 124 },
+      next = { ...incoming, genre: "House", bpm: 140 }
+    await engine.load("A", out)
+    await engine.load("B", next)
+    engine.seek("A", 150)
+    const plan = planTransitions(out, next, 150).find((p) => p.id === "bass")!
+    expect(plan.tempoRamp).toBeDefined()
+    const ramp = plan.tempoRamp!
+    await engine.startAuto("A", plan)
+    expect(engine.state.auto).toBe(true)
+    expect(engine.state.A.rate).toBeCloseTo(1, 4)
+    // Before the ramp point nothing changes.
+    await vi.advanceTimersByTimeAsync((ramp.start - 150 - 1) * 1000)
+    expect(engine.state.A.rate).toBeCloseTo(1, 3)
+    // Partway through the ramp the deck is between the two tempos.
+    await vi.advanceTimersByTimeAsync(
+      ((plan.outStart - ramp.start) / 2 + 1) * 1000
+    )
+    expect(engine.state.A.rate).toBeGreaterThan(1.01)
+    expect(engine.state.A.rate).toBeLessThan(ramp.to)
+    expect(engine.state.auto).toBe(true)
+    // By the time the mix starts it sits at the incoming tempo.
+    await vi.advanceTimersByTimeAsync(
+      ((plan.outStart - ramp.start) / 2 + 2) * 1000
+    )
+    expect(engine.state.A.rate).toBeCloseTo(ramp.to, 2)
+    expect(engine.state.B.playing).toBe(true)
+    expect(engine.state.B.rate).toBeCloseTo(1, 3)
+  })
   it("lets a manual tempo change take over from the tempo return", async () => {
     await engine.load("A", analyzed)
     await engine.load("B", incoming)
@@ -2168,14 +2212,15 @@ describe("audio transport and automix lock", () => {
     expect(engine.state.crossfade).toBe(0.5)
   })
   it("moves HI and MID before LOW during a full-length Long Blend and resets only the silent deck", async () => {
-    await engine.load("A", analyzed)
-    await engine.load("B", incoming)
+    // House: 32-bar long blends (techno would use 64).
+    const houseA = { ...analyzed, genre: "House" },
+      houseB = { ...incoming, genre: "House" }
+    await engine.load("A", houseA)
+    await engine.load("B", houseB)
     engine.setParam("A", "high", 2)
     engine.setParam("A", "mid", -1)
     engine.setCrossfade(0)
-    const plan = planTransitions(analyzed, incoming).find(
-      (p) => p.id === "long"
-    )!
+    const plan = planTransitions(houseA, houseB).find((p) => p.id === "long")!
     await engine.startAuto("A", plan, true)
     await vi.advanceTimersByTimeAsync(20000)
     expect(engine.state.crossfade).toBe(0.5)

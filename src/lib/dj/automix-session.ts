@@ -261,6 +261,7 @@ export class AutomixSession {
         labels: options.labels,
         played: this.played,
         lookahead: true,
+        pace: options.session.mixPace,
         limit: 1,
       }
     ).at(0)

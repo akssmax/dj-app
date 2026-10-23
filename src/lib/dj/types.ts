@@ -132,6 +132,23 @@ export type Transition = {
   cuePhaseWarning?: string
   /** Voice/lead overlap during the mix, 0–1; null if not analyzed. */
   vocalClash?: number | null
+  /** Mixing family of the pair, e.g. "House" or "House → Hip-hop / pop". */
+  genre?: string
+  crossGenre?: boolean
+  /** 1 = same tempo, 2 = incoming at half time, 0.5 = double time. */
+  tempoRelation?: 1 | 2 | 0.5
+  /** Ride the outgoing deck from `from` to `to` (rate) starting at `start`
+   * (outgoing track seconds), finishing as the transition begins. */
+  tempoRamp?: { from: number; to: number; bars: number; start: number }
+  /** Play length the plan was made for, so revalidation uses the same. */
+  pace?: MixPace
   steps: { at: number; label: string; why: string }[]
 }
 export type MixIntent = "maintain" | "lift" | "ease"
+/**
+ * How long each track plays before the next mix:
+ * - full: play to the outro (radio-edit style, long sets)
+ * - dj: leave after the second drop or chorus, like most club DJs
+ * - quick: leave after the first drop, for fast party / mashup sets
+ */
+export type MixPace = "full" | "dj" | "quick"

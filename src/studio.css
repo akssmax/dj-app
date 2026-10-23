@@ -704,8 +704,9 @@ html .app-shell .topbar {
   min-height: 60px;
   padding: 10px 20px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  background: color-mix(in srgb, var(--background) 86%, transparent);
-  backdrop-filter: blur(14px);
+  /* Opaque instead of a backdrop blur: a blur re-renders on every frame
+     the waveforms underneath change, which keeps the GPU busy. */
+  background: color-mix(in srgb, var(--background) 97%, transparent);
 }
 html .app-shell .topbar-leading {
   order: 0;
@@ -1777,12 +1778,11 @@ html .library-browser .energy-rating [data-slot="button"] {
   padding: 8px 8px 8px 10px;
   border-radius: 18px;
   color: var(--foreground);
-  background: color-mix(in srgb, var(--card) 88%, transparent);
+  background: color-mix(in srgb, var(--card) 97%, transparent);
   border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   box-shadow:
     0 18px 40px -12px color-mix(in srgb, var(--shadow) 80%, transparent),
     inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent);
-  backdrop-filter: blur(16px);
   animation: dock-in 220ms ease-out;
 }
 .automix-dock-summary {
@@ -1851,8 +1851,7 @@ html .library-browser .energy-rating [data-slot="button"] {
   position: fixed;
   inset: 0;
   z-index: 45;
-  background: color-mix(in srgb, var(--shadow) 45%, transparent);
-  backdrop-filter: blur(2px);
+  background: color-mix(in srgb, var(--shadow) 55%, transparent);
   animation: fade-in 160ms ease-out;
 }
 .automix-sheet {
@@ -2037,4 +2036,27 @@ html .mixer .controller-controls {
   margin-inline-start: 6px;
   padding: 0 5px;
   font-size: 10px;
+}
+
+/* Automix: genre pair, tempo journey and vocal tags */
+.automix-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.automix-tags .vocal-chip {
+  margin: 0;
+}
+.mix-tag {
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  border: 1px solid color-mix(in srgb, var(--foreground) 14%, transparent);
+}
+.mix-tag[data-tone="jump"] {
+  color: var(--orange);
+  border-color: color-mix(in srgb, var(--orange) 45%, transparent);
 }

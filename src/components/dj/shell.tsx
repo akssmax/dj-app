@@ -27,6 +27,7 @@ import { Icon } from "./icons"
 import { AppearanceSettings, ThemeSelect } from "./appearance"
 import type { ReactNode } from "react"
 import type { StudioLayout } from "@/lib/dj/themes"
+import { isLightTheme } from "@/lib/dj/themes"
 
 function MasterMeter() {
   const value = useEngine((state) => Math.max(state.A.meter, state.B.meter))
@@ -84,9 +85,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [])
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme
-    document.documentElement.classList.toggle("dark", theme !== "daylight")
-    document.documentElement.style.colorScheme =
-      theme === "daylight" ? "light" : "dark"
+    document.documentElement.classList.toggle("dark", !isLightTheme(theme))
+    document.documentElement.style.colorScheme = isLightTheme(theme)
+      ? "light"
+      : "dark"
   }, [theme])
   useEffect(() => {
     document.documentElement.dataset.controllerConnected = String(

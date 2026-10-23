@@ -4,9 +4,16 @@ import { Button } from "@/components/ui/button"
 import type { Track, Transition } from "@/lib/dj/types"
 import { formatTime } from "@/lib/dj/tracks"
 import { waveColumns } from "@/lib/dj/wave-peaks"
-import { drawVocalLane, drawWave, fitCanvas, readPalette } from "./wave-canvas"
+import { labelSections } from "@/lib/dj/sections"
+import {
+  drawSectionStrip,
+  drawVocalLane,
+  drawWave,
+  fitCanvas,
+  readPalette,
+} from "./wave-canvas"
 import { useDJ } from "./provider"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import type { SuggestedCue } from "@/lib/dj/cue-suggestions"
 import {
@@ -175,31 +182,43 @@ export function Waveform({
     observer.observe(svg)
     return () => observer.disconnect()
   }, [])
+  // Dim (played) and bright copies of the waveform, painted only when the
+  // track, view, size or theme changes. Playback just composites the two
+  // at the playhead instead of repainting every column 20 times a second.
+  const layers = useRef<{
+    dim: HTMLCanvasElement
+    bright: HTMLCanvasElement
+  } | null>(null)
+  const [painted, setPainted] = useState(0)
   useEffect(() => {
-    const element = canvas.current,
-      context = element?.getContext("2d")
-    if (!element || !context || !plotBox.width) return
+    const element = canvas.current
+    if (!element || !plotBox.width) return
     fitCanvas(element)
-    context.clearRect(0, 0, element.width, element.height)
-    if (!peaks.length) return
-    const columns = waveColumns(
-      peaks,
-      bands,
-      fullDuration,
-      start,
-      end,
-      element.width
-    )
+    layers.current ??= {
+      dim: document.createElement("canvas"),
+      bright: document.createElement("canvas"),
+    }
+    const { width: w, height: h } = element
+    if (!peaks.length) {
+      layers.current.dim.width = layers.current.bright.width = 0
+      setPainted((n) => n + 1)
+      return
+    }
+    const columns = waveColumns(peaks, bands, fullDuration, start, end, w)
     const palette = readPalette(element)
-    drawWave(
-      context,
-      columns,
-      palette,
-      !!bands,
-      ((position - start) / (end - start)) * element.width,
-      waveStyle
-    )
-    drawVocalLane(context, track?.analysis?.vocals, start, end, palette)
+    for (const [layer, played] of [
+      [layers.current.dim, true],
+      [layers.current.bright, false],
+    ] as const) {
+      layer.width = w
+      layer.height = h
+      const paint = layer.getContext("2d")
+      if (!paint) continue
+      drawWave(paint, columns, palette, !!bands, played ? w : 0, waveStyle)
+      drawVocalLane(paint, track?.analysis?.vocals, start, end, palette)
+      if (track) drawSectionStrip(paint, labelSections(track), start, end)
+    }
+    setPainted((n) => n + 1)
   }, [
     peaks,
     track?.analysis?.vocals,
@@ -207,12 +226,77 @@ export function Waveform({
     fullDuration,
     start,
     end,
-    position,
     plotBox,
     color,
     theme,
     waveStyle,
   ])
+  useEffect(() => {
+    const element = canvas.current,
+      context = element?.getContext("2d"),
+      cached = layers.current
+    if (!element || !context) return
+    context.clearRect(0, 0, element.width, element.height)
+    if (!cached?.dim.width || cached.dim.width !== element.width) return
+    const { width: w, height: h } = element
+    const split = Math.max(
+      0,
+      Math.min(w, Math.round(((position - start) / (end - start)) * w))
+    )
+    if (split > 0) context.drawImage(cached.dim, 0, 0, split, h, 0, 0, split, h)
+    if (split < w)
+      context.drawImage(
+        cached.bright,
+        split,
+        0,
+        w - split,
+        h,
+        split,
+        0,
+        w - split,
+        h
+      )
+  }, [painted, position, start, end])
+  // Up to 800 grid lines: rebuilt only when the view changes, not on every
+  // position update.
+  const grid = useMemo(
+    () =>
+      !compact &&
+      Array.from({ length: barCount }, (_, i) => {
+        const bar = firstBar + i
+        const barX = x(beatOffset + bar * barLength)
+        return (
+          <line
+            key={i}
+            x1={barX}
+            x2={barX}
+            y1="0"
+            y2={height}
+            stroke="currentColor"
+            strokeOpacity={
+              bar % 32 === 0
+                ? 0.42
+                : bar % 16 === 0
+                  ? 0.28
+                  : bar % 8 === 0
+                    ? 0.16
+                    : 0.05
+            }
+            strokeWidth={bar % 16 === 0 ? 1.5 : 0.5}
+          />
+        )
+      }),
+    [
+      compact,
+      barCount,
+      firstBar,
+      beatOffset,
+      barLength,
+      start,
+      duration,
+      height,
+    ]
+  )
   const cueLanes: number[] = []
   const visibleSuggestions = suggested
     .filter((cue) => cue.position >= start && cue.position <= end)
@@ -345,31 +429,7 @@ export function Waveform({
               : "Waveform analysis pending"
           }
         >
-          {!compact &&
-            Array.from({ length: barCount }, (_, i) => {
-              const bar = firstBar + i
-              const barX = x(beatOffset + bar * barLength)
-              return (
-                <line
-                  key={i}
-                  x1={barX}
-                  x2={barX}
-                  y1="0"
-                  y2={height}
-                  stroke="currentColor"
-                  strokeOpacity={
-                    bar % 32 === 0
-                      ? 0.42
-                      : bar % 16 === 0
-                        ? 0.28
-                        : bar % 8 === 0
-                          ? 0.16
-                          : 0.05
-                  }
-                  strokeWidth={bar % 16 === 0 ? 1.5 : 0.5}
-                />
-              )
-            })}
+          {grid}
           {showZone && (
             <rect
               x={x(Math.max(start, visibleZone.start))}

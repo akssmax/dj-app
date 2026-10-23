@@ -6,6 +6,7 @@ import type {
   DeckId,
   EnergyRating,
   MixIntent,
+  MixPace,
   Track,
   Transition,
 } from "@/lib/dj/types"
@@ -86,6 +87,7 @@ export type DJContextValue = {
   layout: StudioLayout
   setLayout: (value: StudioLayout) => void
   setMixIntent: (value: MixIntent) => void
+  setMixPace: (value: MixPace) => void
   setTransitionTechnique: (value: string | null) => void
   transitionPreview: boolean
   setTransitionPreview: (value: boolean) => void

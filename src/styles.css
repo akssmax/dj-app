@@ -4052,18 +4052,12 @@ body {
 .deck-audio-status {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   margin-top: 6px;
-  min-height: 44px;
 }
 .deck-audio-status > span {
   font-size: 0.75rem;
   line-height: 1.5;
-}
-.deck-audio-status button {
-  flex-shrink: 0;
-  margin-inline-start: auto;
 }
 .deck-transport {
   flex-wrap: wrap;

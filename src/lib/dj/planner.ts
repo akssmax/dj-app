@@ -1,6 +1,8 @@
 import { beatOffset as gridOffset } from "./beatgrid"
 import { techniques } from "./lessons"
-import type { MixIntent, Track, Transition } from "./types"
+import type { MixIntent, MixPace, Track, Transition } from "./types"
+import { pairProfile, profileBonus } from "./genre"
+import { labelSections, overlapWith } from "./sections"
 
 export function harmonicCompatibility(a: string | null, b: string | null) {
   if (
@@ -25,6 +27,10 @@ type Options = {
   recent?: string[]
   outCue?: number | null
   inCue?: number | null
+  /** Allow riding the outgoing tempo toward the incoming one (default on). */
+  allowRamp?: boolean
+  /** How much of each track plays before mixing out (default full). */
+  pace?: MixPace
 }
 const definitions: {
   id: string
@@ -68,13 +74,18 @@ const definitions: {
   { id: "fade", lesson: "fade", execution: "fade", bars: 2, needsTempo: false },
   { id: "cut", lesson: "cut", execution: "cut", bars: 0, needsTempo: false },
 ]
-export const transitionChoices = definitions.map((recipe) => ({
-  id: recipe.id,
-  name:
-    recipe.id === "blend"
-      ? "Phrase blend"
-      : techniques.find((t) => t.id === recipe.lesson)!.name,
-}))
+export const transitionChoices = [
+  ...definitions.map((recipe) => ({
+    id: recipe.id,
+    name:
+      recipe.id === "blend"
+        ? "Phrase blend"
+        : techniques.find((t) => t.id === recipe.lesson)!.name,
+  })),
+  { id: "dropswap", name: "Drop swap" },
+  { id: "breakswap", name: "Breakdown swap" },
+  { id: "crossover", name: "Breakdown crossover" },
+]
 
 export function transitionSteps(
   execution: Transition["execution"],
@@ -377,6 +388,41 @@ export function lastLoudPhraseEnd(
   const last = levels.filter(([, level]) => level >= peak * 0.75).at(-1)
   return last ? Math.min(track.duration, last[0] + phrase) : 0
 }
+/**
+ * Where a DJ would aim to leave the outgoing track, counted from `position`
+ * (where it started playing). Club DJs rarely play extended mixes to the
+ * end: they ride the first or second drop, then mix out as it finishes, so
+ * the next track's energy takes over. null = play to the outro.
+ */
+export function exitTarget(
+  track: Track,
+  position: number,
+  pace: MixPace,
+  latest: number
+): number | null {
+  if (pace === "full") return null
+  const bar = 240 / (track.bpm || 120)
+  const minimum = position + (pace === "quick" ? 40 : 75)
+  const drops = labelSections(track).filter(
+    (s) => s.label === "drop" && s.end - bar * 8 > position && s.end >= minimum
+  )
+  const pick = pace === "quick" ? drops.at(0) : (drops.at(1) ?? drops.at(0))
+  const remaining = Math.max(0, track.duration - position)
+  const fallback =
+    position +
+    (pace === "quick"
+      ? Math.min(120, Math.max(50, remaining * 0.35))
+      : Math.min(240, Math.max(90, remaining * 0.55)))
+  // A drop that runs for minutes (flat masters, one long groove) would keep
+  // the track on to its outro: cap the play time like a DJ watching the
+  // clock (about 2 minutes quick, 4 minutes DJ pace).
+  const cap = position + (pace === "quick" ? 120 : 240)
+  return Math.min(
+    latest,
+    Math.max(minimum, Math.min(cap, pick?.end ?? fallback))
+  )
+}
+
 export function planTransitions(
   out: Track,
   incoming: Track,
@@ -412,19 +458,46 @@ export function planTransitions(
     phrase = beat * 64
   const tempoKnown =
     !!out.bpm && out.bpm > 0 && !!incoming.bpm && incoming.bpm > 0
-  const ratio = tempoKnown ? bpm / incoming.bpm! : 1,
-    targetRate = ratio * outRate
-  const canMatch =
+  // Tempo journey: beatmatch directly, at half/double time (174 ↔ 87), or
+  // ride the outgoing deck toward the incoming tempo before the blend.
+  const fits = (r: number) =>
+    Math.abs(r / existingInRate - 1) <= 0.08 && r >= 0.84 && r <= 1.16
+  const relationFor = (r: number): 1 | 2 | 0.5 | null =>
+    !tempoKnown
+      ? null
+      : (([1, 2, 0.5] as const).find((m) =>
+          r === 0 ? false : fits((bpm / (incoming.bpm! * m)) * r)
+        ) ?? null)
+  let multiple = relationFor(outRate) ?? 1,
+    mixOutRate = outRate,
+    tempoRamp: Transition["tempoRamp"] = undefined
+  if (
     tempoKnown &&
-    Math.abs(targetRate / existingInRate - 1) <= 0.08 &&
-    targetRate >= 0.84 &&
-    targetRate <= 1.16
+    relationFor(outRate) === null &&
+    options.allowRamp !== false
+  )
+    for (const m of [1, 2, 0.5] as const) {
+      const to = (existingInRate * incoming.bpm! * m) / bpm
+      if (to < 0.84 || to > 1.16 || Math.abs(to / outRate - 1) > 0.16) continue
+      const change = Math.abs(to - outRate) * bpm
+      const bars = Math.min(64, Math.max(16, Math.round((change * 2) / 4) * 4))
+      tempoRamp = { from: outRate, to, bars, start: 0 }
+      multiple = m
+      mixOutRate = to
+      break
+    }
+  const ratio = tempoKnown ? bpm / (incoming.bpm! * multiple) : 1,
+    targetRate = ratio * mixOutRate
+  const canMatch = tempoKnown && fits(targetRate)
+  const rampLength = tempoRamp ? tempoRamp.bars * 4 * beat : 0
+  const profile = pairProfile(out, incoming)
   const harmonic = harmonicCompatibility(out.camelot, incoming.camelot),
     pitchChanges = canMatch && Math.abs(ratio - 1) > 0.005
   const offset = Math.max(0, phraseOrigin(out)),
     entry = inCue ?? Math.max(0, phraseOrigin(incoming))
   const vocalsKnown =
     !!out.analysis?.vocals?.length && !!incoming.analysis?.vocals?.length
+  const pace = options.pace ?? "full"
   const intent = options.intent ?? "maintain",
     energyDelta = ((incoming.energy ?? 5) - (out.energy ?? 5)) / 10
   const energyFit =
@@ -444,17 +517,29 @@ export function planTransitions(
             !!out.camelot &&
             !!incoming.camelot &&
             !pitchChanges)) &&
-        (d.id !== "long" || harmonic >= 0.8)
+        (d.id !== "long" ||
+          (harmonic >= 0.8 && profile.longBars !== null && multiple === 1))
     )
     .flatMap((d): Transition[] => {
       const lesson = techniques.find((t) => t.id === d.lesson)!,
         match = d.needsTempo || (d.execution === "fade" && canMatch)
       const incomingRate = match ? targetRate : existingInRate,
-        rate = incomingRate / outRate
+        rate = incomingRate / mixOutRate
+      // Blend lengths follow the genre (house 16, techno 32, DnB 16, hip-hop
+      // 8 …); half/double-time pairings stay short.
+      const styleBars =
+        d.id === "long"
+          ? (profile.longBars ?? d.bars)
+          : ["blend", "bass", "harmonic"].includes(d.id)
+            ? profile.blendBars
+            : d.bars
       const requested =
         d.execution === "cut"
-          ? 0.08 * outRate
-          : (d.execution === "fade" && match ? 8 : d.bars) * 4 * beat
+          ? 0.08 * mixOutRate
+          : Math.min(
+              (d.execution === "fade" && match ? 8 : styleBars) * 4 * beat,
+              match && multiple !== 1 ? 8 * 4 * beat : Infinity
+            )
       let duration = Math.min(
         requested,
         out.duration - (outCue ?? position) - 0.02,
@@ -464,18 +549,31 @@ export function planTransitions(
       if (match && duration < beat * 8) return []
       if (match && duration >= beat * 8)
         duration = Math.floor(duration / (beat * 8)) * beat * 8
-      const latest = Math.max(position, out.duration - duration - 0.02),
-        earliest = Math.max(position, out.duration * 0.55)
+      const latest = Math.max(position, out.duration - duration - 0.02)
+      const target = exitTarget(out, position, pace, latest)
+      const earliest = Math.max(
+        position + (match ? rampLength : 0),
+        target === null
+          ? out.duration * 0.55
+          : Math.min(target - phrase * 2, latest)
+      )
       const inLength = duration * rate
+      const short = duration < beat * 8
       // Outro first: leave after the last high-energy phrase, so the mix
       // never cuts a final drop and never exits on a mid-track breakdown.
       // Instrumental stretches are preferred on both sides.
+      // With a shorter pace, aim for the end of the chosen drop instead:
+      // mixing out there hands the next drop to the incoming track.
       const loudEnd = lastLoudPhraseEnd(out, offset, phrase)
       const exitCost = (t: number) =>
-        (t < loudEnd ? 1 + ((loudEnd - t) / out.duration) * 3 : 0) +
+        (target === null
+          ? (t < loudEnd ? 1 + ((loudEnd - t) / out.duration) * 3 : 0) +
+            ((latest - t) / out.duration) * 0.6
+          : (Math.abs(t - target) / phrase) * 0.5) +
         (energyAt(out, t, Math.min(duration, phrase)) ?? 0.5) * 0.35 +
-        ((latest - t) / out.duration) * 0.6 +
-        (vocalAt(out, t, duration) ?? 0) * 0.8
+        (vocalAt(out, t, duration) ?? 0) * 0.8 +
+        // Never start a blend over the outgoing drop or chorus.
+        (short ? 0 : overlapWith(out, "drop", t, duration) * 1.5)
       const fallbackExit = Math.max(
         position,
         offset + Math.floor((latest - offset) / phrase) * phrase
@@ -495,8 +593,32 @@ export function planTransitions(
         (energyAt(incoming, t, inLength) ?? 1) +
         (t / incoming.duration) * 0.15 +
         (vocalAt(incoming, t, inLength) ?? 0) * 0.8
-      const entries =
-        inCue === null && match && incoming.analysis?.energyCurve.length
+      // Song-based tracks have no DJ intro: short exits enter at the hook.
+      const hook =
+        profile.songMode && short && inCue === null
+          ? labelSections(incoming).find((s) => s.label === "drop")
+          : undefined
+      // Mid-track entries: start the incoming build so its drop lands as the
+      // blend finishes, the way DJs skip long extended-mix intros.
+      const landings =
+        pace !== "full" && inCue === null && match && !short
+          ? labelSections(incoming)
+              .filter((s) => s.label === "drop")
+              .slice(0, 2)
+              .map((s) => s.start - inLength)
+              // Skip an intro, not half the track.
+              .filter(
+                (t) =>
+                  t > firstEntry + 1 &&
+                  t <= Math.min(incoming.duration * 0.35, 100)
+              )
+          : []
+      const entries = hook
+        ? [
+            { t: hook.start, cost: entryCost(hook.start) - 0.6 },
+            { t: firstEntry, cost: entryCost(firstEntry) },
+          ]
+        : inCue === null && match && incoming.analysis?.energyCurve.length
           ? [
               firstEntry,
               ...candidateStarts(
@@ -505,13 +627,16 @@ export function planTransitions(
                 (60 / incoming.bpm!) * 64,
                 entry + 0.01,
                 Math.min(
-                  incoming.duration * 0.2,
-                  60,
+                  incoming.duration * (pace === "full" ? 0.2 : 0.35),
+                  pace === "full" ? 60 : 100,
                   incoming.duration - inLength
                 )
               ),
             ]
               .map((t) => ({ t, cost: entryCost(t) }))
+              .concat(
+                landings.map((t) => ({ t, cost: entryCost(t) * 0.5 - 0.35 }))
+              )
               .sort((x, y) => x.cost - y.cost)
               .slice(0, 4)
           : [{ t: firstEntry, cost: 0 }]
@@ -537,7 +662,8 @@ export function planTransitions(
       // that back, because they avoid the overlap a blend would cause.
       const risk =
         vocalClash(out, outStart, incoming, inStart, beat * 32, rate) ?? 0
-      const short = duration < beat * 8
+      if (match && tempoRamp && outStart < position + rampLength - 0.01)
+        return []
       const exitEnergy = energyAt(out, outStart, duration)
       const cueBeatDifference = tempoKnown
         ? ((inStart - gridOffset(incoming)) * incoming.bpm!) / 60 -
@@ -591,7 +717,12 @@ export function planTransitions(
               intentBonus +
               (genreFit ? 7 : 0) +
               energyFit * 6 +
-              (longOverlap ? (harmonic - 0.5) * 15 : 0) -
+              (longOverlap ? (harmonic - 0.5) * 15 * profile.keyWeight : 0) +
+              // The lesson's own genre fit already rewards suitable styles;
+              // the profile then only penalises what the style avoids.
+              (genreFit
+                ? Math.min(0, profileBonus(profile, d.id))
+                : profileBonus(profile, d.id)) -
               (pitchChanges && longOverlap ? 5 : 0) -
               repeated -
               (d.execution === "reverb" && (exitEnergy ?? 0.5) > 0.65
@@ -599,6 +730,7 @@ export function planTransitions(
                 : 0) -
               // Two voices or leads at once: long blends suffer most.
               (clash ?? 0) *
+                profile.vocalWeight *
                 (duration >= beat * 32 ? 30 : duration >= beat * 8 ? 14 : 3) +
               (short ? risk * 28 : 0)
           )
@@ -682,20 +814,43 @@ export function planTransitions(
           anchors: { out: outCue, incoming: inCue },
           cuePhaseWarning,
           vocalClash: clash,
+          genre: profile.label,
+          crossGenre: profile.crossGenre,
+          tempoRelation: match ? multiple : 1,
+          tempoRamp:
+            match && tempoRamp
+              ? { ...tempoRamp, start: outStart - rampLength }
+              : undefined,
+          pace,
           reasons: [
             match
-              ? `Matches effective tempo at ${(bpm * outRate).toFixed(1)} BPM`
+              ? `Matches effective tempo at ${(bpm * mixOutRate).toFixed(1)} BPM`
               : "Native tempos retained; brief overlap avoids rhythmic conflict",
+            ...(match && tempoRamp
+              ? [
+                  `Tempo ramp: deck rides ${(bpm * tempoRamp.from).toFixed(1)} → ${(bpm * tempoRamp.to).toFixed(1)} BPM over ${tempoRamp.bars} bars before the mix`,
+                ]
+              : []),
+            ...(match && multiple !== 1
+              ? [
+                  `${multiple === 2 ? "Half-time" : "Double-time"} mix: ${incoming.bpm} BPM locks to ${(bpm * mixOutRate).toFixed(1)} at ${multiple === 2 ? "half" : "double"} speed`,
+                ]
+              : []),
+            profile.crossGenre
+              ? `Genre jump ${profile.label}: bridging transitions preferred`
+              : `Style: ${profile.label} (${profile.blendBars}-bar blends)`,
             out.camelot && incoming.camelot
               ? `${out.camelot} → ${incoming.camelot}: ${harmonic >= 0.8 ? "source keys compatible" : "favor less melodic overlap"}${pitchChanges && match ? "; pitch shift applies" : ""}`
               : "Keys unverified; audition the overlap",
             outCue !== null
               ? "Uses your selected outgoing cue"
-              : exitEnergy !== null
-                ? outStart >= lastLoudPhraseEnd(out, offset, phrase)
-                  ? "Exits in the outro, after the last high-energy phrase"
-                  : "No clear outro; exits as late as the routine allows"
-                : "Exit estimated on the 16-bar grid",
+              : target !== null
+                ? `Mixes out at ${formatClock(outStart)} as the drop ends (${pace === "quick" ? "quick" : "DJ"} pace), so the next track takes over the energy`
+                : exitEnergy !== null
+                  ? outStart >= lastLoudPhraseEnd(out, offset, phrase)
+                    ? "Exits in the outro, after the last high-energy phrase"
+                    : "No clear outro; exits as late as the routine allows"
+                  : "Exit estimated on the 16-bar grid",
             genreFit
               ? `Technique suits ${out.genre} / ${incoming.genre}`
               : "Choose by arrangement and listening, alongside genre",
@@ -711,7 +866,11 @@ export function planTransitions(
               ? [
                   "Uses your selected incoming cue; audition phrasing before starting",
                 ]
-              : []),
+              : landings.includes(inStart)
+                ? [
+                    `Skips the intro: enters at ${formatClock(inStart)} so the incoming drop lands as the blend ends`,
+                  ]
+                : []),
           ],
           warnings,
           bassSwapAt,
@@ -719,11 +878,258 @@ export function planTransitions(
         },
       ]
     })
+    .concat(
+      structuralTransitions(out, incoming, position, {
+        outCue,
+        inCue,
+        bpm,
+        beat,
+        canMatch,
+        targetRate,
+        existingInRate,
+        mixOutRate,
+        multiple,
+        harmonic,
+        intent,
+        profile,
+        firstEntry: Math.max(0, entry),
+        tempoRamp,
+        rampLength,
+        pace,
+      })
+    )
     .sort((a, b) => b.score - a.score)
+}
+
+type StructuralContext = {
+  outCue: number | null
+  inCue: number | null
+  bpm: number
+  beat: number
+  canMatch: boolean
+  targetRate: number
+  existingInRate: number
+  mixOutRate: number
+  multiple: 1 | 2 | 0.5
+  harmonic: number
+  intent: MixIntent
+  profile: ReturnType<typeof pairProfile>
+  firstEntry: number
+  tempoRamp: Transition["tempoRamp"]
+  rampLength: number
+  pace: MixPace
+}
+
+/**
+ * Transitions placed by the arrangement rather than the phrase grid:
+ * - Drop swap (EDM, DnB, bass, genre jumps): the outgoing build resolves into
+ *   the incoming drop. Works across tempos.
+ * - Breakdown swap (trance / melodic): the incoming track starts under the
+ *   outgoing breakdown so its drop lands as the breakdown ends.
+ * - Breakdown crossover (unrelated tempos): fade the next track in during a
+ *   bass-less breakdown, where there is no beat to clash.
+ */
+function structuralTransitions(
+  out: Track,
+  incoming: Track,
+  position: number,
+  c: StructuralContext
+): Transition[] {
+  if (c.outCue !== null || c.inCue !== null) return []
+  const outSections = labelSections(out),
+    inSections = labelSections(incoming)
+  if (!outSections.length || !inSections.length) return []
+  // Full pace swaps at the last drop / breakdown; shorter paces use the one
+  // nearest the exit target, mid-track.
+  const target = exitTarget(out, position, c.pace, out.duration)
+  const earliest =
+    target === null
+      ? Math.max(position + 1, out.duration * 0.4)
+      : Math.max(position + 30, target - c.beat * 4 * 48)
+  const nearest = <T extends { start: number }>(list: T[]) =>
+    target === null
+      ? list.at(-1)
+      : [...list].sort(
+          (a, b) => Math.abs(a.start - target) - Math.abs(b.start - target)
+        )[0]
+  const inDrop = inSections.find((s) => s.label === "drop")
+  const lesson = (id: string) => techniques.find((t) => t.id === id)!
+  const plans: Transition[] = []
+  const build = (
+    id: string,
+    name: string,
+    lessonId: string,
+    execution: Transition["execution"],
+    fields: {
+      outStart: number
+      inStart: number
+      duration: number
+      beatmatch: boolean
+      base: number
+      why: string
+      reasons: string[]
+      bassSwapAt?: number
+    }
+  ) => {
+    const incomingRate = fields.beatmatch ? c.targetRate : c.existingInRate
+    const rate = incomingRate / c.mixOutRate
+    const clash = vocalClash(
+      out,
+      fields.outStart,
+      incoming,
+      fields.inStart,
+      fields.duration,
+      rate
+    )
+    const score = Math.round(
+      Math.min(
+        97,
+        Math.max(
+          1,
+          fields.base +
+            profileBonus(c.profile, id) +
+            (c.intent === "lift" && id === "dropswap" ? 6 : 0) +
+            // Shorter paces are about mid-track moments: favour them.
+            (c.pace !== "full" ? 4 : 0) +
+            (fields.beatmatch && fields.duration > c.beat * 16
+              ? (c.harmonic - 0.5) * 12 * c.profile.keyWeight
+              : 0) -
+            (clash ?? 0) * c.profile.vocalWeight * 14
+        )
+      )
+    )
+    const technique = lesson(lessonId)
+    plans.push({
+      id,
+      name,
+      description: fields.why,
+      labels: technique.labels,
+      difficulty: technique.level,
+      execution,
+      bars:
+        execution === "cut"
+          ? 0
+          : Math.round((fields.duration / (c.beat * 4)) * 10) / 10,
+      duration: fields.duration,
+      outStart: fields.outStart,
+      inStart: fields.inStart,
+      score,
+      beatmatch: fields.beatmatch,
+      rate,
+      incomingRate,
+      anchors: { out: null, incoming: null },
+      vocalClash: clash,
+      genre: c.profile.label,
+      crossGenre: c.profile.crossGenre,
+      tempoRelation: fields.beatmatch ? c.multiple : 1,
+      tempoRamp:
+        fields.beatmatch && c.tempoRamp
+          ? { ...c.tempoRamp, start: fields.outStart - c.rampLength }
+          : undefined,
+      bassSwapAt: fields.bassSwapAt,
+      pace: c.pace,
+      reasons: [
+        ...fields.reasons,
+        c.profile.crossGenre
+          ? `Genre jump ${c.profile.label}`
+          : `Style: ${c.profile.label}`,
+        clash === null
+          ? "Vocal overlap unknown until both tracks are analyzed"
+          : clash < 0.08
+            ? "No vocal overlap"
+            : `Vocal overlap about ${Math.round(clash * 100)}%`,
+      ],
+      warnings: [
+        "Sections (intro, build, drop, breakdown) are estimated from loudness and bass; listen before relying on them.",
+      ],
+      steps: transitionSteps(execution, fields.bassSwapAt),
+    })
+  }
+  // Drop swap: replace the outgoing track's last drop with the incoming one.
+  const outDrop = nearest(
+    outSections.filter(
+      (s) =>
+        s.label === "drop" &&
+        s.start >= earliest &&
+        s.start <= out.duration - c.beat * 16
+    )
+  )
+  if (
+    outDrop &&
+    inDrop &&
+    (!c.tempoRamp || outDrop.start >= position + c.rampLength)
+  )
+    build("dropswap", "Drop swap", "drop", "cut", {
+      outStart: outDrop.start,
+      inStart: inDrop.start,
+      duration: 0.08 * c.mixOutRate,
+      beatmatch: c.canMatch,
+      base: 68,
+      why: "The outgoing build resolves into the incoming drop, so the next track delivers the payoff. Works across tempos and genres.",
+      reasons: [
+        `${formatClock(outDrop.start)} build resolves into the incoming drop at ${formatClock(inDrop.start)}`,
+      ],
+    })
+  const breakdowns = outSections.filter(
+    (s) =>
+      s.label === "breakdown" &&
+      s.start >= earliest &&
+      s.end - s.start >= c.beat * 32 &&
+      s.end <= out.duration - 1
+  )
+  // Breakdown swap: needs a beatmatch and an incoming intro as long as the
+  // breakdown, so the incoming drop lands on the outgoing release.
+  const chosenBreakdown = nearest(breakdowns)
+  for (const down of chosenBreakdown ? [chosenBreakdown] : []) {
+    if (!c.canMatch || !inDrop) break
+    const bars = Math.min(
+      32,
+      Math.floor((down.end - down.start) / (c.beat * 32)) * 8
+    )
+    const duration = bars * 4 * c.beat
+    const rate = c.targetRate / c.mixOutRate
+    const inStart = inDrop.start - duration * rate
+    if (bars < 8 || inStart < 0) break
+    build("breakswap", "Breakdown swap", "long", "bass", {
+      outStart: down.end - duration,
+      inStart,
+      duration,
+      beatmatch: true,
+      base: 74,
+      bassSwapAt: 0.94,
+      why: "The incoming track builds under the outgoing breakdown; when the breakdown resolves, the new drop arrives instead.",
+      reasons: [
+        `Starts under the ${bars}-bar breakdown; the incoming drop lands at its release (${formatClock(down.end)})`,
+      ],
+    })
+  }
+  // Breakdown crossover: no shared beat, so tempos may differ freely.
+  const quiet = chosenBreakdown
+  if (quiet) {
+    const duration = Math.min(quiet.end - quiet.start, 16 * 4 * c.beat)
+    build("crossover", "Breakdown crossover", "fade", "fade", {
+      outStart: quiet.start,
+      inStart: c.firstEntry,
+      duration,
+      beatmatch: false,
+      base: c.canMatch ? 56 : 73,
+      why: "During a bass-less breakdown there is no beat to clash, so the next track can fade in at its own tempo.",
+      reasons: [
+        `Fades in during the ${formatClock(quiet.start)} breakdown at native tempos`,
+      ],
+    })
+  }
+  return plans
+}
+
+function formatClock(seconds: number) {
+  const s = Math.max(0, Math.round(seconds))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
 }
 
 const family: Record<string, string> = {
   phrase: "blend",
+  drop: "dropswap",
   tempo: "echo",
   genre: "cut",
 }

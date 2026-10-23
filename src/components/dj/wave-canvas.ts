@@ -176,3 +176,49 @@ export function drawVocalLane(
   context.fill()
   context.globalAlpha = 1
 }
+
+const sectionColors: Record<string, string | null> = {
+  drop: "#ff5a5f",
+  build: "#ffb020",
+  breakdown: "#4aa8ff",
+  intro: "rgba(150, 150, 165, 0.75)",
+  outro: "rgba(150, 150, 165, 0.75)",
+  body: null,
+}
+
+/**
+ * Arrangement strip along the bottom (drop, build, breakdown, intro, outro),
+ * with labels when there is room, so the planner's view is visible.
+ */
+export function drawSectionStrip(
+  context: CanvasRenderingContext2D,
+  sections: { start: number; end: number; label: string }[],
+  start: number,
+  end: number,
+  labels = false
+) {
+  if (!sections.length || end <= start) return
+  const { width, height } = context.canvas,
+    strip = Math.max(2, Math.round(height * 0.05))
+  const x = (t: number) => ((t - start) / (end - start)) * width
+  context.font = `600 ${Math.max(9, Math.round(height * 0.085))}px "Geist Mono Variable", monospace`
+  context.textBaseline = "bottom"
+  for (const section of sections) {
+    const color = sectionColors[section.label]
+    if (!color || section.end <= start || section.start >= end) continue
+    const left = Math.max(0, x(section.start)),
+      right = Math.min(width, x(section.end))
+    context.globalAlpha = 0.9
+    context.fillStyle = color
+    context.fillRect(left, height - strip, Math.max(1, right - left - 1), strip)
+    if (labels && right - left > 46) {
+      context.globalAlpha = 0.85
+      context.fillText(
+        section.label.toUpperCase(),
+        left + 4,
+        height - strip - 2
+      )
+    }
+  }
+  context.globalAlpha = 1
+}

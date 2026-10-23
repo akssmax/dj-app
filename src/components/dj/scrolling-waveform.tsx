@@ -2,11 +2,18 @@ import { useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { beatOffset } from "@/lib/dj/beatgrid"
 import { waveColumns } from "@/lib/dj/wave-peaks"
-import type { DeckId } from "@/lib/dj/types"
+import type { DeckId, Track } from "@/lib/dj/types"
 import { useDJ, useEngine } from "./provider"
 import type { WaveformZone } from "./waveform"
 import type { SuggestedCue } from "@/lib/dj/cue-suggestions"
-import { drawVocalLane, drawWave, fitCanvas, readPalette } from "./wave-canvas"
+import { labelSections } from "@/lib/dj/sections"
+import {
+  drawSectionStrip,
+  drawVocalLane,
+  drawWave,
+  fitCanvas,
+  readPalette,
+} from "./wave-canvas"
 import type { WavePalette } from "./wave-canvas"
 
 const ZOOMS = [4, 8, 16, 32]
@@ -16,6 +23,44 @@ const ZOOMS = [4, 8, 16, 32]
  * animation frame from the engine's audio-clock position, so motion stays
  * smooth between the 50 ms state updates.
  */
+/** Beats, stronger bars and labelled 16-beat marks across the whole canvas. */
+function drawGrid(
+  context: CanvasRenderingContext2D,
+  track: Track,
+  start: number,
+  span: number,
+  ratio: number,
+  palette: WavePalette
+) {
+  const { width, height } = context.canvas,
+    beat = 60 / (track.bpm || 120),
+    offset = beatOffset(track),
+    x = (seconds: number) => ((seconds - start) / span) * width
+  // Bar numbers sit just under the vocal lane so it never covers them.
+  const labelTop = Math.max(2, Math.round(height * 0.05)) + 3 * ratio
+  context.font = `600 ${10 * ratio}px "Geist Mono Variable", monospace`
+  context.textBaseline = "top"
+  context.fillStyle = palette.high
+  for (
+    let index = Math.ceil((start - offset) / beat);
+    offset + index * beat <= start + span;
+    index++
+  ) {
+    const t = offset + index * beat
+    if (t < 0 || t > track.duration) continue
+    const px = Math.round(x(t)) + 0.5
+    const bar = index % 4 === 0,
+      phrase = index % 64 === 0
+    context.globalAlpha = phrase ? 0.55 : bar ? 0.22 : 0.08
+    context.fillRect(px, 0, phrase ? 2 * ratio : ratio, height)
+    if (bar && index % 16 === 0) {
+      context.globalAlpha = 0.6
+      context.fillText(String(index / 4 + 1), px + 4 * ratio, labelTop)
+    }
+  }
+  context.globalAlpha = 1
+}
+
 export function ScrollingWaveform({
   id,
   zone,
@@ -50,6 +95,14 @@ export function ScrollingWaveform({
       palette: WavePalette | null = null,
       cueColors: string[] = [],
       last = ""
+    const strip = {
+      dim: document.createElement("canvas"),
+      bright: document.createElement("canvas"),
+      key: "",
+      analysis: undefined as unknown,
+      start: 0,
+      span: 0,
+    }
     const resize = new ResizeObserver(() => {
       last = ""
     })
@@ -142,50 +195,75 @@ export function ScrollingWaveform({
         context.stroke()
         context.restore()
       }
-      // Beat grid: faint beats, stronger bars, labelled 4-bar marks.
-      const offset = beatOffset(track)
-      for (
-        let index = Math.ceil((start - offset) / beat);
-        offset + index * beat <= start + span;
-        index++
+      // Grid, waveform and vocal lane come from a cached strip twice the
+      // visible width; per frame it is only copied at the current offset.
+      // Repainting ~2.5k columns every frame kept the GPU and CPU busy.
+      const stripKey = `${width}|${height}|${track.id}|${view.bars}|${style}`
+      if (
+        stripKey !== strip.key ||
+        track.analysis !== strip.analysis ||
+        start < strip.start ||
+        start + span > strip.start + strip.span
       ) {
-        const t = offset + index * beat
-        if (t < 0 || t > track.duration) continue
-        const px = Math.round(x(t)) + 0.5
-        const bar = index % 4 === 0,
-          phrase = index % 64 === 0
-        context.fillStyle = palette.high
-        context.globalAlpha = phrase ? 0.55 : bar ? 0.22 : 0.08
-        context.fillRect(px, 0, phrase ? 2 * ratio : ratio, height)
-        if (bar && index % 16 === 0) {
-          context.globalAlpha = 0.6
-          context.fillText(String(index / 4 + 1), px + 4 * ratio, 4 * ratio)
-        }
-      }
-      context.globalAlpha = 1
-      const peaks = track.analysis?.peaks ?? []
-      drawWave(
-        context,
-        waveColumns(
-          peaks,
+        strip.key = stripKey
+        strip.analysis = track.analysis
+        strip.start = start - span / 2
+        strip.span = span * 2
+        const columns = waveColumns(
+          track.analysis?.peaks ?? [],
           track.analysis?.bands,
           track.duration,
-          start,
-          start + span,
-          width
-        ),
-        palette,
-        !!track.analysis?.bands,
-        width / 2,
-        style
+          strip.start,
+          strip.start + strip.span,
+          width * 2
+        )
+        for (const [layer, played] of [
+          [strip.dim, true],
+          [strip.bright, false],
+        ] as const) {
+          if (layer.width !== width * 2 || layer.height !== height) {
+            layer.width = width * 2
+            layer.height = height
+          }
+          const paint = layer.getContext("2d")
+          if (!paint) continue
+          paint.clearRect(0, 0, layer.width, layer.height)
+          drawGrid(paint, track, strip.start, strip.span, ratio, palette)
+          drawWave(
+            paint,
+            columns,
+            palette,
+            !!track.analysis?.bands,
+            played ? layer.width : 0,
+            style
+          )
+          drawVocalLane(
+            paint,
+            track.analysis?.vocals,
+            strip.start,
+            strip.start + strip.span,
+            palette
+          )
+        }
+      }
+      const shift = Math.round(((start - strip.start) / span) * width),
+        half = Math.round(width / 2)
+      context.drawImage(strip.dim, shift, 0, half, height, 0, 0, half, height)
+      context.drawImage(
+        strip.bright,
+        shift + half,
+        0,
+        width - half,
+        height,
+        half,
+        0,
+        width - half,
+        height
       )
-      drawVocalLane(
-        context,
-        track.analysis?.vocals,
-        start,
-        start + span,
-        palette
-      )
+      drawSectionStrip(context, labelSections(track), start, start + span, true)
+      // The strip sets its own font; chips are measured with this one.
+      context.font = `600 ${10 * ratio}px "Geist Mono Variable", monospace`
+      context.textBaseline = "top"
       // Suggested transition cues: dashed lines with labels along the bottom.
       context.setLineDash([4 * ratio, 3 * ratio])
       context.lineWidth = 1.5 * ratio

@@ -215,7 +215,10 @@ export class DJEngine {
   private listeners = new Set<() => void>()
   private publishFrame: number | null = null
   private tempoGlides: Partial<
-    Record<DeckId, { from: number; start: number; duration: number }>
+    Record<
+      DeckId,
+      { from: number; to: number; start: number; duration: number }
+    >
   > = {}
   private interval: ReturnType<typeof setInterval>
   private automation?: {
@@ -226,6 +229,8 @@ export class DJEngine {
     started: boolean
     preparing: boolean
     duration: number
+    /** A planned tempo ramp on the outgoing deck has begun. */
+    rampStarted?: boolean
     overrides: Record<DeckId, Partial<AutomationChannel>>
     original: Record<DeckId, AutomationChannel>
     levels: ReturnType<typeof matchLoudness>
@@ -1821,9 +1826,10 @@ export class DJEngine {
       }
     }
   }
-  /** Tempo a deck is heading to: native while it glides back after a mix. */
+  /** Tempo a deck is heading to: the glide target while one runs (native
+   * after a mix, or the next track's tempo during a planned ramp). */
   plannedRate(id: DeckId) {
-    return this.tempoGlides[id] ? 1 : this.state[id].rate
+    return this.tempoGlides[id]?.to ?? this.state[id].rate
   }
   /**
    * After an automatic mix the incoming track keeps the outgoing tempo, so a
@@ -1836,6 +1842,7 @@ export class DJEngine {
     const beat = 60 / ((deck.track?.bpm ?? 120) * deck.rate)
     this.tempoGlides[id] = {
       from: deck.rate,
+      to: 1,
       start: this.context.currentTime,
       duration: Math.min(75, Math.max(15, 32 * 4 * beat)),
     }
@@ -1850,7 +1857,7 @@ export class DJEngine {
         Math.max(0, (this.context.currentTime - glide.start) / glide.duration)
       )
       const eased = progress * progress * (3 - 2 * progress)
-      this.applyRate(id, glide.from + (1 - glide.from) * eased)
+      this.applyRate(id, glide.from + (glide.to - glide.from) * eased)
       if (progress >= 1) {
         delete this.tempoGlides[id]
         this.applyFX(id)
@@ -1861,9 +1868,10 @@ export class DJEngine {
   }
   /** Land a glide immediately, e.g. when the next mix is about to begin. */
   private finishTempoReturn(id: DeckId) {
-    if (!this.tempoGlides[id]) return
+    const glide = this.tempoGlides[id]
+    if (!glide) return
     delete this.tempoGlides[id]
-    this.applyRate(id, 1)
+    this.applyRate(id, glide.to)
     this.applyFX(id)
   }
   setCrossfade(value: number, manual = true) {
@@ -2434,6 +2442,7 @@ export class DJEngine {
         incomingRate: this.state[incoming].rate,
         outCue: now ? null : plan.anchors?.out,
         inCue: plan.anchors?.incoming,
+        pace: plan.pace,
       }
     ).find((p) => p.id === plan.id)
     if (
@@ -2691,6 +2700,9 @@ export class DJEngine {
     this.state.autoPlan = null
     this.state.transition = 0
     this.state.autoStatus = "Ready when you are"
+    // A cancelled mix no longer needs the outgoing deck at the next tempo:
+    // hold it where the ramp reached.
+    if (auto?.rampStarted) delete this.tempoGlides[auto.out]
     if (auto) {
       const ch = this.channels[auto.incoming]
       if (
@@ -2717,8 +2729,10 @@ export class DJEngine {
   }
   private async beginAutomation(auto: NonNullable<typeof this.automation>) {
     auto.preparing = true
-    // The plan assumed the outgoing deck at native tempo; land any glide now.
+    // Land any glide (tempo return or planned ramp) and keep the outgoing
+    // deck at that tempo: the plan was beatmatched against it.
     this.finishTempoReturn(auto.out)
+    auto.original[auto.out].rate = this.state[auto.out].rate
     const ctx = this.context!
     await ctx.resume()
     if (this.automation !== auto) return
@@ -2855,6 +2869,29 @@ export class DJEngine {
       deck.inputMeter = inputMeter
     }
     const auto = this.automation
+    // Tempo journey: ride the outgoing deck toward the next track's tempo so
+    // the blend starts beatmatched without jumping the pitch at once.
+    const ramp = auto?.plan.tempoRamp
+    if (
+      auto &&
+      ramp &&
+      !auto.started &&
+      !auto.rampStarted &&
+      this.state[auto.out].position >= ramp.start
+    ) {
+      auto.rampStarted = true
+      const deck = this.state[auto.out]
+      const averageRate = (deck.rate + ramp.to) / 2
+      this.tempoGlides[auto.out] = {
+        from: deck.rate,
+        to: ramp.to,
+        start: this.context.currentTime,
+        duration: Math.max(
+          1,
+          ((auto.start - deck.position) / averageRate) * 0.95
+        ),
+      }
+    }
     if (
       auto &&
       !auto.started &&
@@ -3018,6 +3055,15 @@ function readMeter(analyser: AnalyserNode, samples: Float32Array<ArrayBuffer>) {
 
 export function effectiveDeckRate(deck: Pick<DeckState, "rate">) {
   return deck.rate
+}
+
+/**
+ * Rate rounded to 0.2% for planning and mix-fit: a tempo glide changes the
+ * exact rate on every tick, which would otherwise re-plan transitions and
+ * re-render the library 20 times a second for no visible difference.
+ */
+export function planningRate(deck: Pick<DeckState, "rate">) {
+  return Math.round(effectiveDeckRate(deck) * 500) / 500
 }
 
 export function deckMixGain(state: EngineState, id: DeckId) {

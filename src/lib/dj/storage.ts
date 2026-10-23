@@ -1,7 +1,7 @@
 import { latestWriter } from "./latest-writer"
 import type { LinkedFolder } from "./linked-files"
 import { createStore, get, getMany, setMany } from "idb-keyval"
-import type { DeckId, EnergyRating, MixIntent, Track } from "./types"
+import type { DeckId, EnergyRating, MixIntent, MixPace, Track } from "./types"
 import type { ManualReport } from "./feedback"
 import type { StudioLayout, ThemeId } from "./themes"
 
@@ -36,6 +36,7 @@ export type LibraryDatabase = {
     layout: StudioLayout
     quantize: Record<DeckId, boolean>
     mixIntent: MixIntent
+    mixPace: MixPace
     transitionTechnique: string | null
     recentTransitions: string[]
     transitionCues: Partial<
@@ -69,6 +70,7 @@ export const defaultDatabase: LibraryDatabase = {
     layout: "parallel",
     quantize: { A: false, B: false },
     mixIntent: "maintain",
+    mixPace: "dj",
     transitionTechnique: null,
     recentTransitions: [],
     transitionCues: {},

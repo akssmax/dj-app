@@ -32,7 +32,7 @@ import {
   techniqueReadiness,
   transitionChoices,
 } from "@/lib/dj/planner"
-import type { Track } from "@/lib/dj/types"
+import type { Track, Transition } from "@/lib/dj/types"
 import { formatTime } from "@/lib/dj/tracks"
 import { cueOptions } from "@/lib/dj/cue-suggestions"
 
@@ -49,15 +49,15 @@ const TransitionExplorer = lazy(() =>
 
 export function TransitionPlanner() {
   const {
-      midi,
-      database,
-      setMixIntent,
-      setTransitionTechnique,
-      setTransitionCue,
-    } = useDJ(),
-    state = useEngine()
+    midi,
+    database,
+    setMixIntent,
+    setTransitionTechnique,
+    setTransitionCue,
+  } = useDJ()
   const { outId, inId, out, incoming, plans, plan, outCue, inCue } =
     useTransitionPlan()
+  const inKeyLock = useEngine((current) => current[inId].keyLock)
   const [tab, setTab] = useState("available")
   const [preparation, setPreparation] = useState<
     ReturnType<typeof techniqueReadiness>[number] | null
@@ -287,7 +287,7 @@ export function TransitionPlanner() {
               <span>
                 Estimated phrases ·{" "}
                 {plan.beatmatch && Math.abs(plan.rate - 1) > 0.005
-                  ? state[inId].keyLock
+                  ? inKeyLock
                     ? "key lock preserves pitch during tempo matching"
                     : "enable key lock to preserve pitch during tempo matching"
                   : "audition the arrangement"}
@@ -345,6 +345,24 @@ const energyGoals = [
   { id: "lift", label: "Lift", arrow: "↗", hint: "Build energy with each mix" },
 ] as const
 
+const paceOptions = [
+  {
+    id: "quick",
+    label: "Quick",
+    hint: "Mix out after the first drop · fast, party-style set",
+  },
+  {
+    id: "dj",
+    label: "DJ",
+    hint: "Mix out after the second drop · mid-track mixes like a club DJ",
+  },
+  {
+    id: "full",
+    label: "Full",
+    hint: "Play each track to its outro before mixing",
+  },
+] as const
+
 /** Quick tempo / key / energy fit chips for the outgoing → next pair. */
 function compatibility(out: Track, next: Track, outRate: number) {
   const chips: { label: string; fit: "good" | "ok" | "poor"; hint: string }[] =
@@ -389,6 +407,7 @@ export function TransitionCoach() {
     database,
     setTransitionTechnique,
     setMixIntent,
+    setMixPace,
     tracks,
     coachOpen,
     setCoachOpen,
@@ -438,7 +457,14 @@ export function TransitionCoach() {
   }, [details])
   const { outId, inId, out, incoming, plan, outCue, inCue } =
     useTransitionPlan()
-  const state = useEngine()
+  // Mix progress in whole percent: enough for the bar and step labels.
+  const state = useEngine((current) => ({
+    auto: current.auto,
+    autoPlan: current.autoPlan,
+    autoStatus: current.autoStatus,
+    autoLevels: current.autoLevels,
+    transition: Math.round(current.transition * 100) / 100,
+  }))
   const preparedTrack = useMemo(
     () =>
       automix.nextId
@@ -573,6 +599,24 @@ export function TransitionCoach() {
             >
               <span aria-hidden="true">{goal.arrow}</span>
               {goal.label}
+            </button>
+          ))}
+        </div>
+        <div
+          className="automix-energy automix-pace"
+          role="radiogroup"
+          aria-label="Automix play length"
+        >
+          {paceOptions.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              role="radio"
+              aria-checked={database.session.mixPace === option.id}
+              title={option.hint}
+              onClick={() => setMixPace(option.id)}
+            >
+              {option.label}
             </button>
           ))}
         </div>
@@ -761,11 +805,9 @@ export function TransitionCoach() {
                 plan?.name ||
                 "No transition yet"}
             </strong>
-            <VocalChip
-              clash={(state.auto ? state.autoPlan : plan)?.vocalClash}
-            />
             <span>{countdown}</span>
           </div>
+          <MixTags plan={state.auto ? state.autoPlan : plan} />
           <div
             className="automix-lane"
             data-mixing={state.auto || undefined}
@@ -955,6 +997,47 @@ export function TransitionCoach() {
       </div>
     ),
     document.body
+  )
+}
+
+/** Genre pair, tempo journey and vocal overlap of the planned mix. */
+function MixTags({ plan }: { plan: Transition | null | undefined }) {
+  if (!plan) return null
+  const journey = plan.tempoRamp
+    ? `Tempo ramp ${plan.tempoRamp.bars} bars`
+    : plan.tempoRelation === 2
+      ? "Half-time mix"
+      : plan.tempoRelation === 0.5
+        ? "Double-time mix"
+        : !plan.beatmatch && plan.execution !== "cut"
+          ? "Native tempos"
+          : null
+  return (
+    <div className="automix-tags">
+      {plan.genre && (
+        <span
+          className="mix-tag"
+          data-tone={plan.crossGenre ? "jump" : undefined}
+          title={
+            plan.crossGenre
+              ? "Different mixing styles: bridging transitions are preferred"
+              : "Mixing style for this pair"
+          }
+        >
+          {plan.crossGenre ? "Genre jump · " : ""}
+          {plan.genre}
+        </span>
+      )}
+      {journey && (
+        <span
+          className="mix-tag"
+          title={plan.reasons.find((r) => /tempo|time/i.test(r))}
+        >
+          {journey}
+        </span>
+      )}
+      <VocalChip clash={plan.vocalClash} />
+    </div>
   )
 }
 

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react"
+import type { ComponentProps } from "react"
 import { Meter } from "./meter"
 import { beatOffset as gridOffset } from "@/lib/dj/beatgrid"
 import { Button } from "@/components/ui/button"
@@ -28,6 +29,32 @@ import { PerformancePads } from "./performance-pads"
 import { transitionAnnotations } from "@/lib/dj/cue-suggestions"
 import { TRACK_DRAG_TYPE } from "@/lib/dj/mix-fit"
 
+/** Elapsed / remaining, re-rendering once a second instead of every tick. */
+function DeckTime({ id }: { id: DeckId }) {
+  const time = useEngine((state) => ({
+    elapsed: Math.floor(state[id].position),
+    remaining: Math.max(
+      0,
+      Math.ceil((state[id].track?.duration ?? 0) - state[id].position)
+    ),
+  }))
+  return (
+    <strong>
+      {formatTime(time.elapsed)}
+      <small>−{formatTime(time.remaining)}</small>
+    </strong>
+  )
+}
+
+/** The overview owns the position subscription so the deck doesn't. */
+function DeckOverview({
+  id,
+  ...props
+}: { id: DeckId } & Omit<ComponentProps<typeof Waveform>, "position">) {
+  const position = useEngine((state) => state[id].position)
+  return <Waveform {...props} position={position} />
+}
+
 export function Deck({
   id,
   zone,
@@ -42,9 +69,18 @@ export function Deck({
     deck = useEngine((state) => {
       const d = state[id],
         other = state[id === "A" ? "B" : "A"]
+      const beat = 60 / (d.track?.bpm ?? 120),
+        beats = Math.max(0, (d.position - gridOffset(d.track)) / beat)
       return {
         track: d.track,
-        position: d.position,
+        // Phrase values change once per bar, not on every 50 ms tick; the
+        // time readout and overview subscribe to the position themselves.
+        phraseBars: d.track?.bpm
+          ? beats % 64 < 1
+            ? 0
+            : Math.ceil((64 - (beats % 64)) / 4)
+          : null,
+        phraseStart: Math.floor(beats / 64) * beat * 64 + gridOffset(d.track),
         playing: d.playing,
         loading: d.loading,
         analysisStatus: d.analysisStatus,
@@ -69,14 +105,8 @@ export function Deck({
   const track = deck.track,
     color = id === "A" ? "lime" : "orange"
   const beatLength = 60 / (track?.bpm ?? 120)
-  const phraseStart = Math.max(
-    0,
-    Math.floor((deck.position - gridOffset(track)) / (beatLength * 64)) *
-      beatLength *
-      64 +
-      gridOffset(track)
-  )
-  const { outId, plan } = useTransitionPlan()
+  const phraseStart = Math.max(0, deck.phraseStart)
+  const { outId, plan } = useTransitionPlan({ positionStep: null })
   const annotations = useMemo(
     () => transitionAnnotations(track, plan, id === outId),
     [track, plan, id, outId]
@@ -100,15 +130,12 @@ export function Deck({
     typeof input === "number" ? input : input[0]
   const enabled = !!track && !deck.loading
   const audioWarning = deck.audioWarning
-  const phraseBeats = track?.bpm
-    ? Math.max(0, ((deck.position - gridOffset(track)) * track.bpm) / 60) % 64
-    : null
   const phraseCaption =
-    phraseBeats === null
+    deck.phraseBars === null
       ? "4/4"
-      : phraseBeats < 1
+      : deck.phraseBars === 0
         ? "16-BAR PHRASE · NOW"
-        : `NEXT PHRASE · ${Math.ceil((64 - phraseBeats) / 4)} BARS`
+        : `NEXT PHRASE · ${deck.phraseBars} BARS`
   return (
     <Card
       className={`deck deck-${color} ${dropTarget ? "is-drop-target" : ""}`}
@@ -233,12 +260,7 @@ export function Deck({
           </div>
           <div className="deck-time">
             <span className="metric-caption">ELAPSED / REMAINING</span>
-            <strong>
-              {formatTime(deck.position)}
-              <small>
-                −{formatTime((track?.duration ?? 0) - deck.position)}
-              </small>
-            </strong>
+            <DeckTime id={id} />
           </div>
         </div>
         <ScrollingWaveform
@@ -248,11 +270,11 @@ export function Deck({
           highlights={annotations.zones.slice(1)}
           caption={`${learning ? "practice · " : ""}${track?.grid ? "grid ✓" : "est. grid"} · ${phraseCaption.toLowerCase().replace("16-bar phrase", "phrase")}`}
         />
-        <Waveform
+        <DeckOverview
           key={track?.id ?? "empty"}
+          id={id}
           compact
           track={track}
-          position={deck.position}
           color={color}
           onSeek={(pos) => engine?.seek(id, pos)}
           plan={plan}
@@ -268,25 +290,13 @@ export function Deck({
           }
         />
       </div>
-      <div
-        className="deck-audio-status"
-        role={audioWarning ? "status" : undefined}
-      >
-        {(audioWarning || deck.analysisError) && (
-          <span className="text-orange" role="status">
+      {(audioWarning || deck.analysisError) && (
+        <div className="deck-audio-status" role="status">
+          <span className="text-orange">
             {audioWarning ?? deck.analysisError}
           </span>
-        )}
-        <Button
-          variant="ghost"
-          size="xs"
-          aria-label={`Reset deck ${id} audio`}
-          onClick={() => engine?.resetChannel(id)}
-          disabled={!enabled}
-        >
-          Reset audio
-        </Button>
-      </div>
+        </div>
+      )}
       <div className="deck-transport">
         <div className="transport-main">
           <Button
@@ -330,6 +340,17 @@ export function Deck({
               Unlink
             </Button>
           )}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="reset-audio-button"
+            aria-label={`Reset deck ${id} audio`}
+            title="Reset audio · reconnect this deck's audio chain"
+            onClick={() => engine?.resetChannel(id)}
+            disabled={!enabled}
+          >
+            <Icon name="plug" size={15} />
+          </Button>
         </div>
         <div className="tempo-adjust">
           <span>{((deck.rate - 1) * 100).toFixed(1)}%</span>

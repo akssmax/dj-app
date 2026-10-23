@@ -30,7 +30,7 @@ import { Artwork } from "./waveform"
 import { FolderBrowser } from "./folder-browser"
 import { Icon } from "./icons"
 import { formatTime } from "@/lib/dj/tracks"
-import { effectiveDeckRate, outgoingDeck } from "@/lib/dj/engine"
+import { outgoingDeck, planningRate } from "@/lib/dj/engine"
 import { mixFit, sortTracks, TRACK_DRAG_TYPE } from "@/lib/dj/mix-fit"
 import type { MixFit, SortKey, SortState } from "@/lib/dj/mix-fit"
 import { waveColumns } from "@/lib/dj/wave-peaks"
@@ -259,7 +259,7 @@ export function Library() {
       return {
         id,
         track: state[id].track,
-        rate: effectiveDeckRate(state[id]),
+        rate: planningRate(state[id]),
       }
     })
   const [sort, setSort] = useState<SortState>(null),

@@ -1,5 +1,5 @@
 import type { LibraryDatabase } from "./storage"
-import type { Track, MixIntent } from "./types"
+import type { Track, MixIntent, MixPace } from "./types"
 import { harmonicCompatibility, planTransitions } from "./planner"
 import {
   discoverTransitions,
@@ -24,6 +24,7 @@ type RecommendationOptions = {
   played?: ReadonlySet<string>
   /** Score how well each candidate leads into the rest of the pool. */
   lookahead?: boolean
+  pace?: MixPace
 }
 
 /**
@@ -128,6 +129,7 @@ export function recommendTracks(
         recent: options.recent,
         outCue,
         inCue,
+        pace: options.pace,
       })
       const plan = options.technique
         ? alternatives.find((candidate) => candidate.id === options.technique)

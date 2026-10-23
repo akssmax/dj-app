@@ -166,29 +166,82 @@ html[data-theme="sunset"] {
   --wave-mid: #ffb347;
   --wave-high: #fff1d6;
 }
+/* Light themes: warm paper surfaces with saturated, playful deck colors.
+   Deck colors stay dark enough to read as text on white. */
 html[data-theme="daylight"] {
-  --background: #edf1f5;
-  --foreground: #18222e;
+  --background: #faf6ef;
+  --foreground: #221c17;
+  --card: #fffdf9;
+  --popover: #fffdf9;
+  --sidebar: #f4ede1;
+  --primary: #e0480f;
+  --primary-foreground: #ffffff;
+  --orange: #c42d82;
+  --secondary: #f2ebdf;
+  --accent: #ffe5d6;
+  --muted-foreground: #6e6357;
+  --border: #e7ddce;
+  --destructive: #c8303a;
+  --shadow: #8c7760;
+  --screen: #f5efe5;
+  --tile: #fffdf9;
+  --signal-cue: #e0480f;
+  --signal-play: #16a34a;
+  --wave-low: #e03a2b;
+  --wave-mid: #f29a0e;
+  --wave-high: #2f2620;
+  --wave-bg: #efe6d8;
+  --vocal: #b832d6;
+}
+html[data-theme="pastel"] {
+  --background: #faf5fc;
+  --foreground: #241a2e;
   --card: #ffffff;
   --popover: #ffffff;
-  --sidebar: #e5eaf0;
-  --primary: #0a7c86;
+  --sidebar: #f4eaf8;
+  --primary: #7c3aed;
   --primary-foreground: #ffffff;
-  --orange: #c4571a;
-  --secondary: #e6ebf1;
-  --accent: #d4ebed;
-  --muted-foreground: #556375;
-  --border: #d2dae3;
-  --destructive: #c0353e;
-  --shadow: #5a6b7d;
-  --screen: #e8edf2;
+  --orange: #e5337a;
+  --secondary: #f2e8f7;
+  --accent: #ede1ff;
+  --muted-foreground: #6f6380;
+  --border: #eadcf0;
+  --destructive: #d13a4a;
+  --shadow: #8b6d9c;
+  --screen: #f6eef9;
   --tile: #ffffff;
-  --signal-cue: #d9541e;
-  --signal-play: #11915a;
-  --wave-low: #2459d6;
-  --wave-mid: #0f9d74;
-  --wave-high: #18222e;
-  --wave-bg: #dce4ec;
+  --signal-cue: #f0671f;
+  --signal-play: #12a378;
+  --wave-low: #7c3aed;
+  --wave-mid: #ff5fa2;
+  --wave-high: #2a1d36;
+  --wave-bg: #efe2f5;
+  --vocal: #db2777;
+}
+html[data-theme="matcha"] {
+  --background: #f3f7ef;
+  --foreground: #1b2316;
+  --card: #fdfffb;
+  --popover: #fdfffb;
+  --sidebar: #e9f0e3;
+  --primary: #3d8a1e;
+  --primary-foreground: #ffffff;
+  --orange: #d97706;
+  --secondary: #e8efe1;
+  --accent: #def0cf;
+  --muted-foreground: #5d6b55;
+  --border: #d7e3cd;
+  --destructive: #c53b32;
+  --shadow: #63805a;
+  --screen: #edf3e7;
+  --tile: #fdfffb;
+  --signal-cue: #ea6a12;
+  --signal-play: #2f9e44;
+  --wave-low: #3d8a1e;
+  --wave-mid: #e9a100;
+  --wave-high: #1b2316;
+  --wave-bg: #e1ebd8;
+  --vocal: #c026d3;
 }
 ::selection {
   background: color-mix(in srgb, var(--primary) 30%, transparent);
@@ -1799,10 +1852,9 @@ html:is([data-density="dense"], [data-density="compact"])
 .coach-top-slot .compact-coach-bar,
 .compact-coach-bar {
   display: grid;
-  grid-template-columns: auto minmax(100px, 150px) auto minmax(
-      70px,
-      1fr
-    ) auto auto;
+  grid-template-columns:
+    auto minmax(100px, 150px) auto minmax(70px, 1fr)
+    auto auto;
   gap: 4px;
   align-items: center;
 }
@@ -1949,10 +2001,9 @@ html:is([data-density="dense"], [data-density="compact"])
 }
 .coach-selected-summary {
   display: grid;
-  grid-template-columns: minmax(100px, 1fr) minmax(0, 1fr) auto minmax(
-      0,
-      1fr
-    ) auto;
+  grid-template-columns:
+    minmax(100px, 1fr) minmax(0, 1fr) auto minmax(0, 1fr)
+    auto;
   gap: 10px;
   align-items: center;
   padding: 12px;
@@ -2532,8 +2583,10 @@ html[data-density="dense"] .transition-choice {
   .automix-toolbar {
     gap: 8px;
   }
+  /* Wrap to its own line rather than squeezing the Style menu. */
   .automix-picker {
     flex: 1;
+    min-width: 210px;
   }
   .automix-picker [data-slot="select-trigger"] {
     flex: 1;
