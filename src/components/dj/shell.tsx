@@ -514,7 +514,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   </Button>
                 </div>
               )}
-              {pathname !== "/" && (
+              {pathname !== "/app" && (
                 <>
                   <TransitionCoach />
                   {!coachOpen && (
