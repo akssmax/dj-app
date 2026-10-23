@@ -51,7 +51,7 @@ const rows: { label: string; cells: Cell[] }[] = [
   },
   {
     label: "Stem separation",
-    cells: [some("On the roadmap"), no(), yes(), yes(), yes(), yes()],
+    cells: [some("Prepared on your device"), no(), yes(), yes(), yes(), yes()],
   },
   {
     label: "Decks",

@@ -26,11 +26,33 @@ export type Track = {
   energy: number | null
   color: string
   source: "demo" | "local"
+  /** Attribution for bundled tracks, shown in Track credits. */
+  credit?: {
+    url: string
+    artistUrl: string
+    license: string
+    licenseUrl: string
+  }
   file?: Blob
   linkedFile?: LinkedFile
   available?: boolean
   analysis?: Analysis
   grid?: { bpm: number; offset: number; originalBpm: number | null }
+  /** Your key (Camelot) when analysis got it wrong; always wins. */
+  keyOverride?: string
+  /** Your arrangement sections when analysis got them wrong; always win. */
+  sectionOverride?: {
+    start: number
+    end: number
+    label: "intro" | "build" | "drop" | "breakdown" | "body" | "outro"
+  }[]
+  /** Stems prepared for this track (see stem-store.ts). */
+  stems?: {
+    /** "opus": stored on this device; "pcm": this session only. */
+    format: "opus" | "pcm"
+    device: "gpu" | "cpu"
+    preparedAt: string
+  }
   memoryCues?: number[]
 }
 /** Per-window RMS levels aligned with Analysis.peaks. */
@@ -61,6 +83,27 @@ export type Analysis = {
   confidence: number
   /** How steady the detected beatgrid is, 0–1; absent on older analyses. */
   gridConfidence?: number
+  /** Key per stretch between arrangement changes. */
+  keySections?: {
+    start: number
+    end: number
+    key: string | null
+    camelot: string | null
+    confidence: number
+  }[]
+  /** The master's tuning offset in semitones (−0.5…0.5). */
+  tuning?: number
+  /** Per-second level of each stem (vocals, drums, bass, other), 0–1. */
+  stemLevels?: Record<"vocals" | "drums" | "bass" | "other", number[]>
+  /** Version of the analysis that produced this (see ANALYSIS_VERSION). */
+  analysisVersion?: number
+  /** Every detected beat and bar start (seconds), when beat tracking ran. */
+  beats?: number[]
+  downbeats?: number[]
+  /** The tracked beats fit one tempo; false for live or drifting tempo. */
+  steadyTempo?: boolean
+  /** What produced the grid: the beat-tracking model or signal processing. */
+  method?: "model" | "dsp"
 }
 export type DeckState = {
   track: Track | null
@@ -98,6 +141,10 @@ export type DeckState = {
   tempoRange: number
   keyShift: number
   keyLock: boolean
+  /** Stem levels when the track's stems are loaded on this deck. */
+  stems: { vocals: number; drums: number; bass: number; melody: number } | null
+  /** "full": vocals, drums, bass, melody; "vocals": vocals + instrumental. */
+  stemLayout: "full" | "vocals" | null
   headphoneCue: boolean
   jogTouched: boolean
   loopAdjust: "in" | "out" | null
@@ -160,6 +207,19 @@ export type Transition = {
   steps: { at: number; label: string; why: string }[]
   /** Automatic effects for this transition (Auto-FX). */
   fx?: FXCue[]
+  /** Stem level changes during the transition (stem routines). */
+  stemMoves?: StemMove[]
+}
+
+/** One stem's level moving from `from` to `to` between two points of a
+ * transition's progress (0–1). */
+export type StemMove = {
+  deck: "out" | "in"
+  stem: "vocals" | "drums" | "bass" | "melody"
+  from: number
+  to: number
+  start: number
+  end: number
 }
 export type FXKind =
   | "echo"
@@ -172,6 +232,8 @@ export type FXKind =
   | "gate"
   | "flanger"
   | "filterIn"
+  /** Echo on the vocal stem only (needs stems on the deck). */
+  | "vocalEcho"
 /** One automatic effect, placed on the outgoing track's beat grid. */
 export type FXCue = {
   kind: FXKind

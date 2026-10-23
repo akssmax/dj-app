@@ -11,8 +11,8 @@ import type {
 import { padFXPresets } from "./pad-fx"
 import { alignBarPhase, beatOffset, echoDelay, snapToBeat } from "./beatgrid"
 import { measurePeaks } from "./wave-peaks"
-import { VOCALS_VERSION } from "./structure"
-import { automationControls, automationFrame } from "./automation"
+import { analysisOutdated, VOCALS_VERSION } from "./structure"
+import { automationControls, automationFrame, stemGainsAt } from "./automation"
 import type { AutomationChannel } from "./automation"
 import { matchLoudness, prepareLoudness } from "./loudness"
 import {
@@ -23,12 +23,27 @@ import {
 } from "./planner"
 import { linkedFingerprint } from "./library-analysis"
 import { readLinkedFile } from "./linked-files"
-import { createPitchNode, registerPitch } from "./pitch-control"
+import { createPitchNode, PITCH_LATENCY, registerPitch } from "./pitch-control"
 import type { PitchProcessor } from "./pitch-control"
-import { createScratchNode, registerScratch } from "./scratch-control"
+import {
+  createScratchNode,
+  registerScratch,
+  SCRATCH_REACH,
+  sendScratchWindow,
+} from "./scratch-control"
 import { createFXRack, noiseBuffer, resetRack, scheduleCue } from "./fx-rack"
 import type { FXRack } from "./fx-rack"
 import { describeFX, primaryFX } from "./auto-fx"
+import { loadDeckStems } from "./stem-store"
+import {
+  allStemsOn,
+  buildStemBuffer,
+  createStemMatrix,
+  matrixWeights,
+  setStemGains,
+  stemLayoutFor,
+} from "./stem-matrix"
+import type { StemGains, StemMatrix } from "./stem-matrix"
 import { tracklistCue, tracklistText } from "./tracklist"
 import { renderTransition } from "./transition-preview"
 import type { TracklistEntry } from "./tracklist"
@@ -51,6 +66,11 @@ type Channel = {
   reverbInput: AudioNode
   /** Auto-FX nodes, wired once both channels exist. */
   rack?: FXRack
+  /** The original plus stems in one multichannel buffer, for playback. */
+  stemBuffer?: AudioBuffer
+  stemMatrix?: StemMatrix
+  /** Stems arrived while playing; attach at the next stop. */
+  pendingStems?: boolean
   cueGain: GainNode
   slipAnchor?: { position: number; time: number; rate: number }
   echoOutTimer?: ReturnType<typeof setTimeout>
@@ -60,6 +80,9 @@ type Channel = {
   nudgeTimer?: ReturnType<typeof setTimeout>
   source?: AudioBufferSourceNode
   pitch?: PitchProcessor
+  /** A fresh key-lock node made ahead of time, so its settings are in place
+   * before audio reaches it. */
+  pitchSpare?: PitchProcessor
   pitchVersion: number
   buffer?: AudioBuffer
   reverseBuffer?: AudioBuffer
@@ -67,6 +90,8 @@ type Channel = {
   scratchResume?: boolean
   scrubSource?: AudioBufferSourceNode
   scratch?: AudioWorkletNode
+  /** The span of the track (seconds) the scratch tape currently holds. */
+  scratchSpan?: [number, number]
   lastScrubTime?: number
   startTime: number
   startOffset: number
@@ -145,6 +170,8 @@ export const emptyDeck = (): DeckState => ({
   tempoRange: 0.08,
   keyShift: 0,
   keyLock: false,
+  stems: null,
+  stemLayout: null,
   headphoneCue: false,
   jogTouched: false,
   loopAdjust: null,
@@ -242,6 +269,10 @@ export class DJEngine {
   private setLog: TracklistEntry[] = []
   private listeners = new Set<() => void>()
   private publishFrame: number | null = null
+  /** Trim knobs following a slow audio glide after a mix. */
+  private trimGlides: Partial<
+    Record<DeckId, { from: number; to: number; start: number; tau: number }>
+  > = {}
   private tempoGlides: Partial<
     Record<
       DeckId,
@@ -259,6 +290,8 @@ export class DJEngine {
     duration: number
     /** A planned tempo ramp on the outgoing deck has begun. */
     rampStarted?: boolean
+    /** Decks whose stems a hand took over during this transition. */
+    stemsTouched?: Set<DeckId>
     /** Auto-FX cues are on the audio clock; their overlay sources. */
     fxScheduled?: boolean
     fxSources?: AudioScheduledSourceNode[]
@@ -285,6 +318,8 @@ export class DJEngine {
   ) => void
   onHandoff?: (idle: DeckId, playing: DeckId) => void
   onAutoCancel?: () => void
+  /** Run the downloaded beat-tracking model during analysis (Settings). */
+  useAnalysisModels = true
   onTransition?: (
     id: string,
     fx: string,
@@ -527,13 +562,19 @@ export class DJEngine {
         : {}),
       track,
       loading: true,
+      stems: null,
+      stemLayout: null,
       cues: cues ? [...cues] : emptyDeck().cues,
       cueLabels: labels ? [...labels] : emptyDeck().cueLabels,
     }
     channel.buffer = undefined
+    channel.stemBuffer = undefined
+    delete this.trimGlides[id]
+    channel.pendingStems = false
     channel.scratch?.disconnect()
     channel.scratch?.port.close()
     channel.scratch = undefined
+    channel.scratchSpan = undefined
     channel.loopIn = undefined
     channel.reverseBuffer = undefined
     channel.pitchVersion++
@@ -567,7 +608,7 @@ export class DJEngine {
       )
         return
       channel.buffer = buffer
-      await this.prepareScratch(id, buffer, version)
+      await this.prepareScratch(id, version)
       if (channel.loadVersion !== version) return
       const cachedAnalysis = this.analysisCache.get(linkedFingerprint(track))
       if (cachedAnalysis)
@@ -599,8 +640,10 @@ export class DJEngine {
       this.applyChannel(id)
       this.applyMix()
       this.publish()
+      if (this.state[id].track.stems) void this.attachStems(id)
       if (
         !this.state[id].track.analysis ||
+        analysisOutdated(this.state[id].track.analysis) ||
         this.analysisJobs.has(linkedFingerprint(track))
       )
         void this.analyze(id)
@@ -630,12 +673,37 @@ export class DJEngine {
       duration,
       analysis,
       bpm,
-      key: analysis.key,
-      camelot: analysis.camelot,
+      // A key you set by hand outlives re-analysis.
+      key: track.keyOverride ? track.key : analysis.key,
+      camelot: track.keyOverride ?? analysis.camelot,
       energy: analysis.energy,
     }
   }
 
+  /**
+   * New metadata for a track that may be on a deck (prepared stems, stem
+   * levels): loaded decks take it without touching playback.
+   */
+  updateTrackMetadata(track: Track) {
+    let changed = false
+    for (const id of ["A", "B"] as DeckId[]) {
+      const deck = this.state[id]
+      if (deck.track?.id !== track.id || deck.loading) continue
+      const hadStems = !!deck.track.stems
+      deck.track = {
+        ...deck.track,
+        stems: track.stems,
+        analysis: track.analysis ?? deck.track.analysis,
+        key: track.key,
+        camelot: track.camelot,
+        keyOverride: track.keyOverride,
+        sectionOverride: track.sectionOverride,
+      }
+      if (!hadStems && track.stems) void this.attachStems(id)
+      changed = true
+    }
+    if (changed) this.publish()
+  }
   analyze(id: DeckId): Promise<boolean> {
     const track = this.state[id].track,
       buffer = this.channels[id]?.buffer
@@ -723,7 +791,8 @@ export class DJEngine {
             undefined,
             "Analysis timed out. Try again when the device is less busy."
           ),
-        60000
+        // The beat model can add a one-time 10 MB download.
+        180000
       )
       // Copy PCM; never transfer the AudioBuffer's storage used by playback.
       // Stereo folding, waveform and music analysis run entirely in the worker.
@@ -732,7 +801,11 @@ export class DJEngine {
         (_, channel) => buffer.getChannelData(channel).slice()
       )
       worker.postMessage(
-        { channels, sampleRate: buffer.sampleRate },
+        {
+          channels,
+          sampleRate: buffer.sampleRate,
+          useModels: this.useAnalysisModels,
+        },
         channels.map((samples) => samples.buffer)
       )
     } catch {
@@ -893,7 +966,9 @@ export class DJEngine {
       else deck.syncTo = null
     }
     const source = ctx.createBufferSource()
-    source.buffer = ch.reversed ? (ch.reverseBuffer ?? ch.buffer) : ch.buffer
+    source.buffer = ch.reversed
+      ? (ch.reverseBuffer ?? ch.buffer)
+      : (ch.stemBuffer ?? ch.buffer)
     source.playbackRate.value = deck.rate
     this.routeSource(id, source)
     this.applyChannel(id)
@@ -905,6 +980,25 @@ export class DJEngine {
     )
     ch.startTime = startTime
     deck.position = ch.startOffset
+    // The key-lock path runs PITCH_LATENCY behind its input. Start the
+    // source that much early when the start is scheduled far enough ahead;
+    // otherwise a synced or scheduled start skips that much audio to stay on
+    // the grid, and a plain Play starts from the cue and is heard a moment
+    // later (the playhead waits with it).
+    let sourceTime = startTime,
+      sourceOffset = ch.startOffset
+    if (ch.pitch) {
+      if (startTime - PITCH_LATENCY >= ctx.currentTime)
+        sourceTime = startTime - PITCH_LATENCY
+      else if ((deck.syncTo || atTime !== undefined) && !ch.reversed) {
+        sourceTime = ctx.currentTime
+        sourceOffset +=
+          (ctx.currentTime + PITCH_LATENCY - startTime) * deck.rate
+      } else {
+        sourceTime = ctx.currentTime
+        ch.startTime = ctx.currentTime + PITCH_LATENCY
+      }
+    }
     if (deck.loop && deck.track?.bpm) {
       const length = (deck.loop * 60) / deck.track.bpm
       source.loop = true
@@ -920,8 +1014,8 @@ export class DJEngine {
     }
     deck.playing = true
     source.start(
-      ch.startTime,
-      ch.reversed ? ch.buffer.duration - ch.startOffset - 0.01 : ch.startOffset
+      sourceTime,
+      ch.reversed ? ch.buffer.duration - sourceOffset - 0.01 : sourceOffset
     )
     this.publish()
   }
@@ -929,6 +1023,7 @@ export class DJEngine {
     if (this.automation) this.cancelAuto()
     const deck = this.state[id],
       ch = this.channels[id]
+    if (ch?.pendingStems) queueMicrotask(() => void this.attachStems(id))
     if (ch) {
       ch.transportVersion++
       ch.pendingPlay = false
@@ -959,7 +1054,37 @@ export class DJEngine {
       ch.pitch.node.port.close()
       ch.pitch = undefined
     }
+    this.preparePitch(id)
     this.publish()
+  }
+  /** Keep a spare key-lock node ready while the deck needs one. */
+  private preparePitch(id: DeckId) {
+    const ch = this.channels[id],
+      deck = this.state[id]
+    if (!ch || !this.context || ch.pitchSpare) return
+    if (deck.keyLock || deck.keyShift !== 0)
+      ch.pitchSpare = createPitchNode(this.context)
+  }
+  /**
+   * Restart a playing deck's source at the position you hear, so entering
+   * or leaving the key-lock path keeps the deck on its grid.
+   */
+  private restartSource(id: DeckId) {
+    const ch = this.channels[id],
+      deck = this.state[id]
+    if (!ch?.source || !deck.playing) return
+    const position = this.position(id),
+      source = ch.source
+    ch.source = undefined
+    source.onended = null
+    source.stop()
+    source.disconnect()
+    ch.pitch?.node.disconnect()
+    ch.pitch?.node.port.close()
+    ch.pitch = undefined
+    deck.playing = false
+    // A start time marks it as on-grid: skip ahead rather than shift late.
+    void this.play(id, position, this.context!.currentTime)
   }
   async toggle(id: DeckId) {
     this.cancelAuto()
@@ -988,10 +1113,19 @@ export class DJEngine {
     target.loadVersion++
     target.pitchVersion++
     target.buffer = source.buffer
+    target.stemBuffer = source.stemBuffer
+    if (source.stemMatrix && this.context)
+      target.stemMatrix =
+        target.stemMatrix?.layout === source.stemMatrix.layout
+          ? target.stemMatrix
+          : createStemMatrix(this.context, source.stemMatrix.layout)
+    if (target.stemMatrix && target.rack)
+      target.stemMatrix.vocalTap.connect(target.rack.echoInput)
     target.scratch?.disconnect()
     target.scratch?.port.close()
     target.scratch = undefined
-    void this.prepareScratch(id, source.buffer, target.loadVersion)
+    target.scratchSpan = undefined
+    void this.prepareScratch(id, target.loadVersion)
     target.reverseBuffer = undefined
     target.reversed = false
     target.loopIn = source.loopIn
@@ -1005,6 +1139,8 @@ export class DJEngine {
       rate: original.rate,
       keyShift: original.keyShift,
       keyLock: original.keyLock,
+      stems: target.stemBuffer && original.stems ? { ...original.stems } : null,
+      stemLayout: target.stemBuffer ? original.stemLayout : null,
       cues: [...original.cues],
       cueLabels: [...original.cueLabels],
       memoryCues: [...original.memoryCues],
@@ -1012,6 +1148,12 @@ export class DJEngine {
       loopAdjust: null,
       syncTo: null,
     }
+    if (target.stemMatrix && this.state[id].stems && this.context)
+      setStemGains(
+        target.stemMatrix,
+        this.state[id].stems,
+        this.context.currentTime
+      )
     this.state[otherId].syncTo = null
     this.state.error = null
     if (original.playing) void this.play(id, position)
@@ -1276,6 +1418,7 @@ export class DJEngine {
     await registerPitch(ctx)
     if (version !== ch.pitchVersion || ctx.state === "closed") return false
     this.state[id].keyShift = Math.max(-12, Math.min(12, semitones))
+    this.preparePitch(id)
     this.refreshPitch(id)
     this.publish()
     return true
@@ -1287,23 +1430,79 @@ export class DJEngine {
     if (enabled) await registerPitch(ctx)
     if (version !== ch.pitchVersion || ctx.state === "closed") return
     this.state[id].keyLock = enabled
+    this.preparePitch(id)
     this.refreshPitch(id)
     this.publish()
   }
   private routeSource(id: DeckId, source: AudioBufferSourceNode) {
     const ch = this.channels[id]!,
       deck = this.state[id]
+    const target = ch.rack?.sourceGate ?? ch.inputAnalyser
+    // A stem buffer goes through the stem gains, which mix it back to stereo.
+    const matrix =
+      ch.stemMatrix && (source.buffer?.numberOfChannels ?? 0) > 2
+        ? ch.stemMatrix
+        : null
+    let output: AudioNode = source
+    if (matrix) {
+      source.connect(matrix.input)
+      matrix.output.disconnect()
+      output = matrix.output
+    }
     if (deck.keyLock || deck.keyShift !== 0) {
-      ch.pitch ??= createPitchNode(this.context!)
+      ch.pitch ??= ch.pitchSpare ?? createPitchNode(this.context!)
+      ch.pitchSpare = undefined
       this.writeParam(ch.pitch.rate, source.playbackRate.value)
       this.writeParam(
         ch.pitch.pitch,
         deck.keyLock ? 1 : source.playbackRate.value
       )
       this.writeParam(ch.pitch.semitones, deck.keyShift)
-      source.connect(ch.pitch.node)
-      ch.pitch.node.connect(ch.rack?.sourceGate ?? ch.inputAnalyser)
-    } else source.connect(ch.rack?.sourceGate ?? ch.inputAnalyser)
+      output.connect(ch.pitch.node)
+      ch.pitch.node.connect(target)
+    } else output.connect(target)
+  }
+
+  /**
+   * Load a track's prepared stems onto its deck for playback. While the
+   * deck plays, this waits for the next stop so the music never jumps.
+   */
+  private async attachStems(id: DeckId) {
+    const ch = this.channels[id],
+      deck = this.state[id],
+      track = deck.track
+    if (!ch?.buffer || !track?.stems || !this.context) return
+    if (deck.playing) {
+      ch.pendingStems = true
+      return
+    }
+    const version = ch.loadVersion,
+      original = ch.buffer
+    const stems = await loadDeckStems(track, original.length).catch(() => null)
+    if (!stems || ch.loadVersion !== version || ch.buffer !== original) return
+    const layout = stemLayoutFor(original.duration)
+    ch.stemBuffer = buildStemBuffer(this.context, original, stems, layout)
+    if (ch.stemMatrix?.layout !== layout) {
+      ch.stemMatrix = createStemMatrix(this.context, layout)
+      if (ch.rack) ch.stemMatrix.vocalTap.connect(ch.rack.echoInput)
+    }
+    this.state[id].stems = { ...allStemsOn }
+    this.state[id].stemLayout = layout
+    setStemGains(ch.stemMatrix, allStemsOn, this.context.currentTime)
+    ch.pendingStems = false
+    this.publish()
+  }
+
+  /** Set one stem's level on a deck (0 = muted, 1 = full). */
+  setStem(id: DeckId, stem: keyof StemGains, value: number) {
+    const ch = this.channels[id],
+      deck = this.state[id]
+    if (!ch?.stemMatrix || !deck.stems || !this.context) return
+    // A hand on a stem takes that deck's stems back from a running routine.
+    if (this.automation) (this.automation.stemsTouched ??= new Set()).add(id)
+    deck.stems = { ...deck.stems, [stem]: Math.max(0, Math.min(1, value)) }
+    setStemGains(ch.stemMatrix, deck.stems, this.context.currentTime)
+    this.publish()
   }
   private refreshPitch(id: DeckId) {
     const ch = this.channels[id]
@@ -1315,6 +1514,13 @@ export class DJEngine {
         this.state[id].keyLock ? 1 : ch.source.playbackRate.value
       )
       this.writeParam(ch.pitch.semitones, this.state[id].keyShift)
+      return
+    }
+    // Entering or leaving the key-lock path changes the delay: restart at
+    // the heard position so the deck stays on its grid.
+    const pitched = this.state[id].keyLock || this.state[id].keyShift !== 0
+    if (this.state[id].playing && (pitched || ch.pitch)) {
+      this.restartSource(id)
       return
     }
     ch.source.disconnect()
@@ -1597,16 +1803,26 @@ export class DJEngine {
         deck.jogTouched = action.value > 0
         if (ch) {
           if (deck.jogTouched) {
-            const resume = deck.playing
+            const resume = deck.playing,
+              speed = resume ? (ch.source?.playbackRate.value ?? deck.rate) : 0
             if (deck.playing) this.pause(id)
             ch.scratchResume = resume
+            this.feedScratch(id, deck.position, true)
+            // A hand on a moving record brakes it rather than cutting it.
+            if (resume && ch.scratch && this.context)
+              ch.scratch.port.postMessage({
+                type: "hold",
+                position: deck.position,
+                speed,
+                time: this.context.currentTime,
+              })
           } else {
             ch.scratch?.port.postMessage({ type: "stop" })
             ch.scrubSource?.stop()
             ch.scrubSource = undefined
             if (ch.scratchResume) {
               ch.scratchResume = false
-              void this.play(id)
+              this.resumeFromHand(id)
             }
           }
         }
@@ -1805,6 +2021,7 @@ export class DJEngine {
     key: "volume" | "trim" | "low" | "mid" | "high" | "filter" | "rate",
     value: number
   ) {
+    if (key === "trim") delete this.trimGlides[id]
     if (key === "rate" || key === "volume") this.cancelAuto()
     else {
       this.releaseAutomationControl(id, key)
@@ -1948,6 +2165,24 @@ export class DJEngine {
     }
     return changed
   }
+  /** Move trim knobs along their audio glide (exponential, like the audio). */
+  private advanceTrimGlides() {
+    if (!this.context) return false
+    let changed = false
+    for (const id of ["A", "B"] as DeckId[]) {
+      const glide = this.trimGlides[id]
+      if (!glide) continue
+      const elapsed = this.context.currentTime - glide.start
+      const value =
+        glide.to + (glide.from - glide.to) * Math.exp(-elapsed / glide.tau)
+      if (Math.abs(value - glide.to) < 0.05) {
+        this.state[id].trim = glide.to
+        delete this.trimGlides[id]
+      } else this.state[id].trim = Math.round(value * 10) / 10
+      changed = true
+    }
+    return changed
+  }
   /** Land a glide immediately, e.g. when the next mix is about to begin. */
   private finishTempoReturn(id: DeckId) {
     const glide = this.tempoGlides[id]
@@ -1982,7 +2217,13 @@ export class DJEngine {
     for (const band of ["low", "mid", "high"] as const)
       if (band === "low") this.applyBass(id)
       else this.writeParam(ch[band].gain, deck[band])
-    this.writeParam(ch.trim.gain, Math.pow(10, deck.trim / 20))
+    const glide = this.trimGlides[id]
+    if (glide && this.context && !this.hardwareLocked) {
+      // Carry on the glide rather than freezing it at the knob's value.
+      const now = this.context.currentTime
+      ch.trim.gain.cancelScheduledValues(now)
+      ch.trim.gain.setTargetAtTime(10 ** (glide.to / 20), now, glide.tau)
+    } else this.writeParam(ch.trim.gain, Math.pow(10, deck.trim / 20))
     this.applyFilter(id)
     this.applyFX(id)
   }
@@ -1990,13 +2231,19 @@ export class DJEngine {
     const ch = this.channels[id],
       deck = this.state[id]
     if (!ch) return
-    ch.filter.type = deck.filter > 0 ? "highpass" : "lowpass"
-    this.writeParam(
-      ch.filter.frequency,
-      deck.filter > 0
-        ? 30 * Math.pow(500, deck.filter)
-        : 22000 * Math.pow(0.002, Math.abs(deck.filter))
-    )
+    const type = deck.filter > 0 ? "highpass" : "lowpass",
+      frequency =
+        deck.filter > 0
+          ? 30 * Math.pow(500, deck.filter)
+          : 22000 * Math.pow(0.002, Math.abs(deck.filter))
+    if (ch.filter.type !== type && this.context) {
+      // Crossing the centre: change type and frequency together. Gliding
+      // the frequency after the switch briefly ran a high-pass at 22 kHz.
+      const now = this.context.currentTime
+      ch.filter.frequency.cancelScheduledValues(now)
+      ch.filter.frequency.setValueAtTime(frequency, now)
+      ch.filter.type = type
+    } else this.writeParam(ch.filter.frequency, frequency)
   }
   private applyFX(id: DeckId) {
     const ch = this.channels[id],
@@ -2166,7 +2413,7 @@ export class DJEngine {
         if (ch) ch.scrubSource = undefined
         if (ch?.scratchResume) {
           ch.scratchResume = false
-          void this.play(id)
+          this.resumeFromHand(id)
         }
         if (ch?.reversed) this.reverse(id, false)
       }
@@ -2250,6 +2497,7 @@ export class DJEngine {
     const ch = this.channels[id],
       ctx = this.context
     if (ch?.scratch && ctx) {
+      this.feedScratch(id, this.state[id].position)
       ch.scratch.port.postMessage({
         type: "move",
         position: this.state[id].position,
@@ -2305,21 +2553,62 @@ export class DJEngine {
     }
     source.start()
   }
-  private async prepareScratch(
-    id: DeckId,
-    buffer: AudioBuffer,
-    version: number
-  ) {
+  private async prepareScratch(id: DeckId, version: number) {
     const ctx = this.context!,
       ch = this.channels[id]!
     try {
       await registerScratch(ctx)
       if (ch.loadVersion !== version || ctx.state === "closed") return
-      ch.scratch = createScratchNode(ctx, buffer)
+      ch.scratch = createScratchNode(ctx)
       ch.scratch.connect(ch.inputAnalyser)
+      ch.scratchSpan = undefined
     } catch {
       // Older browsers retain the bounded short-grain scrub fallback.
     }
+  }
+  /**
+   * Keep the scratch tape holding the audio around `position`: on a new
+   * touch (`fresh`), or when a long scratch nears the window's edge.
+   */
+  private feedScratch(id: DeckId, position: number, fresh = false) {
+    const ch = this.channels[id],
+      deck = this.state[id]
+    if (!ch?.scratch || !ch.buffer) return
+    const span = ch.scratchSpan,
+      margin = SCRATCH_REACH / 4
+    const inside =
+      span &&
+      (position - span[0] > margin || span[0] <= 0) &&
+      (span[1] - position > margin || span[1] >= ch.buffer.duration - 0.01)
+    if (!fresh && inside) return
+    ch.scratchSpan = sendScratchWindow(
+      ch.scratch,
+      ch.buffer,
+      position,
+      ch.stemBuffer && ch.stemMatrix && deck.stems
+        ? {
+            buffer: ch.stemBuffer,
+            gains: deck.stems,
+            layout: ch.stemMatrix.layout,
+          }
+        : undefined
+    )
+  }
+  /** Let go of the record: the motor brings it back up to speed briefly. */
+  private resumeFromHand(id: DeckId) {
+    void this.play(id).then(() => {
+      const ch = this.channels[id],
+        ctx = this.context
+      if (!ch?.source || !ctx || !this.state[id].playing) return
+      const rate = ch.source.playbackRate.value,
+        now = ctx.currentTime,
+        spin = 0.06,
+        from = 0.5
+      ch.source.playbackRate.setValueAtTime(rate * from, now)
+      ch.source.playbackRate.linearRampToValueAtTime(rate, now + spin)
+      // The spin-up covers less ground than full speed would.
+      ch.startTime += (spin * (1 - from)) / 2
+    })
   }
   cueButton(id: DeckId, pressed: boolean) {
     const ch = this.channels[id]
@@ -2545,11 +2834,17 @@ export class DJEngine {
     this.state.B.syncTo = null
     this.loop(out, null)
     this.loop(incoming, null)
+    // The incoming deck is silent, so its glide can stop. The outgoing deck
+    // is playing: its trim keeps gliding (the knob with it) and the mix
+    // plans with the level it is settling to. Automix arms the next mix
+    // within a second of the last, so landing the glide here made the knob
+    // jump.
+    delete this.trimGlides[incoming]
     const original = Object.fromEntries(
       (["A", "B"] as DeckId[]).map((id) => [
         id,
         {
-          trim: this.state[id].trim,
+          trim: this.trimGlides[id]?.to ?? this.state[id].trim,
           mid: this.state[id].mid,
           high: this.state[id].high,
           low: this.state[id].low,
@@ -2612,7 +2907,9 @@ export class DJEngine {
     this.state.crossfade = 0.5
     this.state[out].volume = levels.outVolume
     this.state[incoming].volume = 0
-    this.state[out].trim = levels.outTrim
+    // The outgoing deck is playing: its headroom trim waits for the
+    // transition and eases in over the first bar (see controlsAt). The
+    // incoming deck is silent, so its matched trim can apply now.
     this.state[incoming].trim = levels.inTrim
     this.state.autoLevels = levels.message
     this.applyChannel(out)
@@ -2686,6 +2983,7 @@ export class DJEngine {
           overlayInput: ch.inputAnalyser,
           master: this.masterNode!,
           noise: () => (this.noise ??= noiseBuffer(ctx)),
+          vocalTap: this.state[id].stems ? ch.stemMatrix?.vocalTap : undefined,
         })
       )
     }
@@ -2704,6 +3002,19 @@ export class DJEngine {
       outgoing ? auto.levels.outVolume : auto.levels.inVolume,
       outgoing ? auto.levels.outTrim : auto.levels.inTrim
     )
+    if (outgoing) {
+      // Headroom for the overlap eases in over the first bar (or the whole
+      // transition when it is shorter), never as a step on a playing track.
+      const bar =
+        240 / ((this.state[id].track?.bpm ?? 120) * this.state[id].rate)
+      const reach = Math.min(
+        1,
+        (progress * auto.duration) / Math.max(0.05, bar)
+      )
+      controls.trim =
+        auto.original[id].trim +
+        (auto.levels.outTrim - auto.original[id].trim) * reach
+    }
     // Existing manual FX and knobs touched during this transition belong to
     // the person. Automation continues to own the untouched controls.
     if (auto.original[id].fx.enabled) controls.fx = auto.original[id].fx
@@ -2752,6 +3063,14 @@ export class DJEngine {
             Math.min(1, (this.context.currentTime - auto.start) / auto.duration)
           )
         : 0
+    // Stem routines end with every stem back up on both decks.
+    for (const id of [auto.out, auto.incoming]) {
+      const matrix = this.channels[id]?.stemMatrix
+      if (!matrix || !this.state[id].stems || !this.context) continue
+      if (!auto.plan.stemMoves?.length || auto.stemsTouched?.has(id)) continue
+      this.state[id].stems = { ...allStemsOn }
+      setStemGains(matrix, allStemsOn, this.context.currentTime)
+    }
     // Auto-FX: a cancelled mix stops everything now; a finished one keeps
     // its echo and reverb tails ringing.
     for (const source of auto.fxSources ?? [])
@@ -2763,8 +3082,12 @@ export class DJEngine {
     for (const id of [auto.out, auto.incoming]) {
       const rack = this.channels[id]?.rack
       if (!rack || !this.context || !auto.fxScheduled) continue
-      if (cancelled) resetRack(rack, this.context.currentTime)
-      else {
+      if (cancelled) {
+        resetRack(rack, this.context.currentTime)
+        const tap = this.channels[id]?.stemMatrix?.vocalTap.gain
+        tap?.cancelScheduledValues(this.context.currentTime)
+        tap?.setValueAtTime(0, this.context.currentTime)
+      } else {
         resetRack(rack, this.context.currentTime, "volume")
         resetRack(rack, this.context.currentTime, "filter")
       }
@@ -2802,11 +3125,13 @@ export class DJEngine {
               : cancelled
                 ? saved.volume
                 : auto.levels.inVolume,
+          // The incoming trim glides to its settled level (below), and the
+          // knob follows it instead of jumping.
           trim: cancelled
             ? saved.trim
             : id === auto.out
               ? saved.trim
-              : auto.levels.settledInTrim,
+              : deck.trim,
           rate: cancelled ? saved.rate : deck.rate,
         })
       }
@@ -2826,12 +3151,23 @@ export class DJEngine {
       }
       this.applyChannel(id)
       // Give back the overlap headroom slowly so the level doesn't jump.
-      if (!cancelled && id === auto.incoming && this.context) {
+      if (
+        !cancelled &&
+        id === auto.incoming &&
+        this.context &&
+        !("trim" in auto.overrides[id])
+      ) {
         const now = this.context.currentTime,
           param = ch.trim.gain
         param.cancelScheduledValues(now)
-        // Settles over about four seconds.
-        param.setTargetAtTime(10 ** (deck.trim / 20), now, 1.3)
+        // Settles over about four seconds; the knob follows (tick).
+        param.setTargetAtTime(10 ** (auto.levels.settledInTrim / 20), now, 1.3)
+        this.trimGlides[id] = {
+          from: deck.trim,
+          to: auto.levels.settledInTrim,
+          start: now,
+          tau: 1.3,
+        }
       }
     }
     if (auto.plan.execution === "loop") {
@@ -2893,6 +3229,13 @@ export class DJEngine {
     // deck at that tempo: the plan was beatmatched against it.
     this.finishTempoReturn(auto.out)
     auto.original[auto.out].rate = this.state[auto.out].rate
+    // A trim glide from the last mix has settled by now; the transition's
+    // own trim curve takes over from its target.
+    const glide = this.trimGlides[auto.out]
+    if (glide) {
+      this.state[auto.out].trim = glide.to
+      delete this.trimGlides[auto.out]
+    }
     const ctx = this.context!
     await ctx.resume()
     if (this.automation !== auto) return
@@ -2958,7 +3301,9 @@ export class DJEngine {
     if (!auto.fxScheduled) this.scheduleFX(auto, start)
     // Web Audio clock schedules the audible curves; the 50ms UI tick only reflects them.
     const schedule = (param: AudioParam, value: (p: number) => number) => {
-      param.cancelScheduledValues(ctx.currentTime)
+      // Cancel only what lies after now so a value set this instant (the
+      // filter's starting frequency) holds until the curve begins.
+      param.cancelScheduledValues(ctx.currentTime + 0.001)
       param.setValueAtTime(value(0), start)
       param.setValueCurveAtTime(
         Float32Array.from({ length: 257 }, (_, i) => value(i / 256)),
@@ -2973,9 +3318,10 @@ export class DJEngine {
         ch = this.channels[id]!
       const controls = (p: number) => this.controlsAt(auto, id, p)
       schedule(ch.gain.gain, (p) => controls(p).volume)
-      // Trim matching is applied during preparation, before the incoming source starts.
-      ch.trim.gain.cancelScheduledValues(ctx.currentTime)
-      ch.trim.gain.setValueAtTime(10 ** (controls(0).trim / 20), start)
+      // Trim: the incoming match applied while it was silent; the outgoing
+      // headroom eases in over the first bar.
+      if (!("trim" in auto.overrides[id]))
+        schedule(ch.trim.gain, (p) => 10 ** (controls(p).trim / 20))
       for (const band of ["low", "mid", "high"] as const)
         if (!(band in auto.overrides[id]))
           schedule(ch[band].gain, (p) => controls(p)[band])
@@ -2984,6 +3330,12 @@ export class DJEngine {
         !("filter" in auto.overrides[id]) &&
         ["filter", "echo", "reverb"].includes(auto.plan.execution)
       ) {
+        // Move the frequency with the type: a high-pass left at the
+        // low-pass's open 22 kHz muted the deck until the curve began, then
+        // the jump to 30 Hz burst out above 0 dBFS.
+        const open = 30 * 500 ** controls(0).filter
+        ch.filter.frequency.cancelScheduledValues(ctx.currentTime)
+        ch.filter.frequency.setValueAtTime(open, ctx.currentTime)
         ch.filter.type = "highpass"
         schedule(ch.filter.frequency, (p) => 30 * 500 ** controls(p).filter)
       }
@@ -3007,11 +3359,34 @@ export class DJEngine {
         start
       )
     }
+    // Stem routines: each stem weight follows the plan's stem moves.
+    for (const [id, role] of [
+      [auto.out, "out"],
+      [auto.incoming, "in"],
+    ] as const) {
+      const matrix = this.channels[id]?.stemMatrix
+      if (!matrix || !this.state[id].stems) continue
+      if (!auto.plan.stemMoves?.some((move) => move.deck === role)) continue
+      for (const key of ["original", "vocals", "drums", "bass"] as const)
+        for (const node of matrix.weights[key])
+          schedule(
+            node.gain,
+            (p) =>
+              matrixWeights(
+                stemGainsAt(auto.plan, role, p) ?? allStemsOn,
+                matrix.layout
+              )[key]
+          )
+    }
     this.publish()
   }
   private tick() {
     if (!this.context) return
-    let changed = this.advanceTempoGlides() || !!this.automation
+    // Advance both glides every tick: with "||" a running tempo return
+    // skipped the trim glide, freezing the knob until the next mix.
+    const tempoMoved = this.advanceTempoGlides(),
+      trimMoved = this.advanceTrimGlides()
+    let changed = tempoMoved || trimMoved || !!this.automation
     for (const id of ["A", "B"] as DeckId[]) {
       const deck = this.state[id],
         ch = this.channels[id],
@@ -3099,6 +3474,14 @@ export class DJEngine {
       this.state.autoStatus = `${frame.phase} · ${Math.round(progress * 100)}%`
       for (const id of [auto.out, auto.incoming])
         Object.assign(this.state[id], this.controlsAt(auto, id, progress))
+      for (const [id, role] of [
+        [auto.out, "out"],
+        [auto.incoming, "in"],
+      ] as const) {
+        const gains = stemGainsAt(auto.plan, role, progress)
+        if (gains && this.state[id].stems && !auto.stemsTouched?.has(id))
+          this.state[id].stems = gains
+      }
       if (progress >= 1) {
         this.automation = undefined
         this.state.auto = false
@@ -3346,6 +3729,7 @@ export class DJEngine {
       ch.pitchVersion++
       ch.pitch?.node.disconnect()
       ch.pitch?.node.port.close()
+      ch.pitchSpare?.node.port.close()
       ch.scratch?.disconnect()
       ch.scratch?.port.close()
       ch.scrubSource?.stop()

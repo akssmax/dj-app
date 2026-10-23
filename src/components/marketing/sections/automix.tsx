@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router"
 import { TransitionPlayer } from "../transition-player"
 
 const pipeline = [
@@ -80,13 +81,18 @@ export function AutomixSection() {
         <div className="real-controls">
           <figure className="site-shot">
             <img
-              src="/marketing/coach.jpg"
+              src="/marketing/coach.webp"
               alt="The Automix bar in Cue: vibe, length and FX controls, then the outgoing track, the chosen move with its reasons and the next track"
               width={2028}
               height={414}
               loading="lazy"
             />
-            <figcaption>The real Automix bar in the studio.</figcaption>
+            <figcaption>
+              The real Automix bar in the studio.{" "}
+              <Link to="/automix-test">
+                Hear how it mixed an 18-minute set →
+              </Link>
+            </figcaption>
           </figure>
           <ul className="control-cards">
             {controls.map((c) => (

@@ -4,8 +4,18 @@ import viteReact from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import { nitro } from "nitro/vite"
 
+// Share cards need absolute URLs. Set SITE_URL, or let Vercel's production
+// domain fill it in at build time.
+const siteUrl = (
+  process.env.SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : "")
+).replace(/\/$/, "")
+
 const config = defineConfig({
   resolve: { tsconfigPaths: true },
+  define: { __SITE_URL__: JSON.stringify(siteUrl) },
   build: {
     rolldownOptions: {
       output: {

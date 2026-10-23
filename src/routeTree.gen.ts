@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/app'
+import { Route as AutomixTestRouteImport } from './routes/automix-test'
+import { Route as CompareRouteImport } from './routes/compare'
 import { Route as HomeRouteImport } from './routes/home'
 import { Route as LearnRouteImport } from './routes/learn'
 import { Route as RoadmapRouteImport } from './routes/roadmap'
@@ -23,6 +25,16 @@ const IndexRoute = IndexRouteImport.update({
 const AppRoute = AppRouteImport.update({
   id: '/app',
   path: '/app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AutomixTestRoute = AutomixTestRouteImport.update({
+  id: '/automix-test',
+  path: '/automix-test',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CompareRoute = CompareRouteImport.update({
+  id: '/compare',
+  path: '/compare',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HomeRoute = HomeRouteImport.update({
@@ -44,6 +56,8 @@ const RoadmapRoute = RoadmapRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
+  '/automix-test': typeof AutomixTestRoute
+  '/compare': typeof CompareRoute
   '/home': typeof HomeRoute
   '/learn': typeof LearnRoute
   '/roadmap': typeof RoadmapRoute
@@ -51,6 +65,8 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
+  '/automix-test': typeof AutomixTestRoute
+  '/compare': typeof CompareRoute
   '/home': typeof HomeRoute
   '/learn': typeof LearnRoute
   '/roadmap': typeof RoadmapRoute
@@ -59,21 +75,47 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRoute
+  '/automix-test': typeof AutomixTestRoute
+  '/compare': typeof CompareRoute
   '/home': typeof HomeRoute
   '/learn': typeof LearnRoute
   '/roadmap': typeof RoadmapRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/app' | '/home' | '/learn' | '/roadmap'
+  fullPaths:
+    | '/'
+    | '/app'
+    | '/automix-test'
+    | '/compare'
+    | '/home'
+    | '/learn'
+    | '/roadmap'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/app' | '/home' | '/learn' | '/roadmap'
-  id: '__root__' | '/' | '/app' | '/home' | '/learn' | '/roadmap'
+  to:
+    | '/'
+    | '/app'
+    | '/automix-test'
+    | '/compare'
+    | '/home'
+    | '/learn'
+    | '/roadmap'
+  id:
+    | '__root__'
+    | '/'
+    | '/app'
+    | '/automix-test'
+    | '/compare'
+    | '/home'
+    | '/learn'
+    | '/roadmap'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRoute
+  AutomixTestRoute: typeof AutomixTestRoute
+  CompareRoute: typeof CompareRoute
   HomeRoute: typeof HomeRoute
   LearnRoute: typeof LearnRoute
   RoadmapRoute: typeof RoadmapRoute
@@ -93,6 +135,20 @@ declare module '@tanstack/react-router' {
       path: '/app'
       fullPath: '/app'
       preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/automix-test': {
+      id: '/automix-test'
+      path: '/automix-test'
+      fullPath: '/automix-test'
+      preLoaderRoute: typeof AutomixTestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/compare': {
+      id: '/compare'
+      path: '/compare'
+      fullPath: '/compare'
+      preLoaderRoute: typeof CompareRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/home': {
@@ -122,6 +178,8 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRoute,
+  AutomixTestRoute: AutomixTestRoute,
+  CompareRoute: CompareRoute,
   HomeRoute: HomeRoute,
   LearnRoute: LearnRoute,
   RoadmapRoute: RoadmapRoute,

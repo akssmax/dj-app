@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState } from "react"
 import { Link, useLocation, useNavigate } from "@tanstack/react-router"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 import { Badge } from "@/components/ui/badge"
 import {
   Dialog,
@@ -30,6 +31,7 @@ import type { StudioLayout } from "@/lib/dj/themes"
 import { isLightTheme } from "@/lib/dj/themes"
 import { CueMark } from "@/components/brand/mark"
 import { APP_RELEASE, APP_VERSION } from "@/lib/version"
+import { demoTracks } from "@/lib/dj/tracks"
 
 function MasterMeter() {
   const value = useEngine((state) => Math.max(state.A.meter, state.B.meter))
@@ -572,47 +574,60 @@ export function AppShell({ children }: { children: ReactNode }) {
             <DialogContent className="credits-dialog">
               <DialogTitle>Music for your first mix.</DialogTitle>
               <DialogDescription>
-                Five freely licensed tracks by Kevin MacLeod. Original artwork
-                in Cue is decorative; it is not the artist’s album artwork.
+                Freely licensed tracks bundled with Cue. Original artwork in Cue
+                is decorative; it is not the artist’s album artwork.
               </DialogDescription>
               <div className="credits-list">
-                {[
-                  "EDM Detection Mode",
-                  "The Lift",
-                  "Inspired",
-                  "Electrodoodle",
-                  "Club Diver",
-                ].map((title) => (
-                  <div key={title}>
-                    <strong>{title}</strong>
-                    <span>Kevin MacLeod (incompetech.com)</span>
-                  </div>
-                ))}
+                {demoTracks.map(
+                  (track) =>
+                    track.credit && (
+                      <div key={track.id}>
+                        <strong>
+                          <a
+                            href={track.credit.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {track.title}
+                          </a>
+                        </strong>
+                        <span>
+                          <a
+                            href={track.credit.artistUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {track.artist}
+                          </a>
+                        </span>
+                      </div>
+                    )
+                )}
               </div>
               <p>
-                Licensed under{" "}
+                Free under the{" "}
                 <a
-                  href="https://creativecommons.org/licenses/by/3.0/"
+                  href="https://pixabay.com/service/license-summary/"
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Creative Commons: By Attribution 3.0
+                  Pixabay Content License
                 </a>
-                . Tracks are redistributed unmodified. Playback effects and
-                recorded mixes may modify the audio.
+                . Tracks are bundled unmodified. Playback effects and recorded
+                mixes may modify the audio.
               </p>
               <Button
                 variant="outline"
                 nativeButton={false}
                 render={
                   <a
-                    href="https://incompetech.com/music/royalty-free/"
+                    href="https://pixabay.com/music/"
                     target="_blank"
                     rel="noreferrer"
                   />
                 }
               >
-                Visit the artist <Icon name="right" />
+                More on Pixabay Music <Icon name="right" />
               </Button>
             </DialogContent>
           </Dialog>
@@ -643,6 +658,7 @@ function Settings({
     setDirection,
     engine,
     notify,
+    setAnalysisModels,
   } = useDJ()
   const audioState = useEngine((state) => ({
     // A closed settings dialog has no live signal displays to refresh.
@@ -956,6 +972,21 @@ function Settings({
                 saved files and analysis. Keep original files backed up. This
                 build accepts audio files up to 80 MB each.
               </p>
+              <label className="settings-toggle-row">
+                <span>
+                  <strong>AI beat tracking</strong>
+                  <small>
+                    Finds beats and bar starts with the Beat This! model (MIT,
+                    10 MB, downloaded once). Runs on this device; no audio is
+                    uploaded. Off uses signal processing only.
+                  </small>
+                </span>
+                <Switch
+                  checked={database.session.analysisModels}
+                  aria-label="AI beat tracking"
+                  onCheckedChange={(checked) => setAnalysisModels(checked)}
+                />
+              </label>
               <Button
                 variant="outline"
                 onClick={() =>

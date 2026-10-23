@@ -199,7 +199,7 @@ describe("measured section levels and headroom", () => {
     expect(loud.inTrim).toBeLessThan(loud.settledInTrim)
     expect(loud.settledInTrim).toBeCloseTo(0, 3)
   })
-  it("keeps conservative summed peaks below -3dB including extreme positive EQ", () => {
+  it("keeps the overlap's power-summed peak below -3dB including extreme positive EQ", () => {
     for (const recipe of [
       plan,
       { ...getPlan("bass"), outStart: 0, inStart: 0 },
@@ -215,14 +215,46 @@ describe("measured section levels and headroom", () => {
         )
         for (let n = 0; n <= 256; n++) {
           const frame = automationFrame(recipe, n / 256)
-          const sum =
-            0.99 *
-            10 ** ((boost * 3) / 20) *
-            (10 ** (levels.outTrim / 20) * levels.outVolume * frame.outFader +
-              10 ** (levels.inTrim / 20) * levels.inVolume * frame.inFader)
+          const peak = 0.99 * 10 ** ((boost * 3) / 20)
+          const sum = Math.hypot(
+            peak *
+              10 ** (levels.outTrim / 20) *
+              levels.outVolume *
+              frame.outFader,
+            peak * 10 ** (levels.inTrim / 20) * levels.inVolume * frame.inFader
+          )
           expect(sum).toBeLessThanOrEqual(10 ** (-3 / 20) + 0.0001)
         }
       }
     }
+  })
+  it("leaves ordinary blends of two mastered tracks near full level", () => {
+    // Two tracks peaking at -3 dBFS through the fade's overlap: a linear
+    // peak sum demanded a cut; as power they fit as they are.
+    const levels = matchLoudness(
+      pcm(0.7),
+      pcm(0.7),
+      plan,
+      { out: saved, incoming: saved },
+      1
+    )
+    expect(levels.headroomDb).toBeLessThan(0.5)
+  })
+})
+
+describe("stem moves", () => {
+  it("moves a stem's level between two points of the transition", async () => {
+    const { stemGainsAt } = await import("./automation")
+    const plan = {
+      stemMoves: [
+        { deck: "out", stem: "vocals", from: 1, to: 0, start: 0, end: 0.4 },
+        { deck: "in", stem: "vocals", from: 0, to: 1, start: 0.9, end: 1 },
+      ],
+    } as Parameters<typeof stemGainsAt>[0]
+    expect(stemGainsAt(plan, "out", 0)!.vocals).toBe(1)
+    expect(stemGainsAt(plan, "out", 0.5)!.vocals).toBe(0)
+    expect(stemGainsAt(plan, "out", 0.5)!.drums).toBe(1)
+    expect(stemGainsAt(plan, "in", 0.5)!.vocals).toBe(0)
+    expect(stemGainsAt(plan, "in", 1)!.vocals).toBe(1)
   })
 })

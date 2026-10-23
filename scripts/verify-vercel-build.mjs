@@ -39,5 +39,5 @@ const response = await server.fetch(
 )
 assert.equal(response.status, 404)
 console.log("Unknown route: application HTTP 404 verified")
-await access(new URL("static/audio/edm-detection-mode.mp3", output))
+await access(new URL("static/audio/club-no-copyright.mp3", output))
 console.log("Demo audio: CDN asset verified")

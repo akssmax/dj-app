@@ -1,6 +1,13 @@
 import { beatOffset as gridOffset } from "./beatgrid"
 import { techniques } from "./lessons"
-import type { FXCue, MixIntent, MixPace, Track, Transition } from "./types"
+import type {
+  FXCue,
+  MixIntent,
+  MixPace,
+  StemMove,
+  Track,
+  Transition,
+} from "./types"
 import { pairProfile, profileBonus } from "./genre"
 import { labelSections, overlapWith } from "./sections"
 import { describeFX, planFX } from "./auto-fx"
@@ -163,6 +170,11 @@ export const transitionChoices = [
   { id: "filterin", name: "Filter in" },
   { id: "brake", name: "Brake / vinyl stop" },
   { id: "backspin", name: "Backspin" },
+  { id: "stembass", name: "Stem bass swap" },
+  { id: "vocalout", name: "Vocal out" },
+  { id: "instrumentalin", name: "Instrumental in" },
+  { id: "acapella", name: "Acapella over" },
+  { id: "drumswap", name: "Drum swap" },
 ]
 
 /** Routines placed by the arrangement (drops, breakdowns), not by cues. */
@@ -209,6 +221,11 @@ const intentFit: Record<MixIntent, Record<string, number>> = {
     backspin: 2,
     brake: -4,
     filterin: -4,
+    drumswap: 5,
+    stembass: 3,
+    acapella: 3,
+    vocalout: 2,
+    instrumentalin: 2,
   },
   ease: {
     long: 10,
@@ -229,6 +246,11 @@ const intentFit: Record<MixIntent, Record<string, number>> = {
     fakedrop: -6,
     doubledrop: -6,
     backspin: -6,
+    vocalout: 4,
+    acapella: 4,
+    instrumentalin: 2,
+    stembass: 1,
+    drumswap: -2,
   },
   maintain: {
     bass: 6,
@@ -249,6 +271,11 @@ const intentFit: Record<MixIntent, Record<string, number>> = {
     fakedrop: 0,
     brake: -4,
     backspin: -4,
+    stembass: 6,
+    vocalout: 4,
+    instrumentalin: 4,
+    acapella: 2,
+    drumswap: 2,
   },
 }
 
@@ -273,6 +300,11 @@ function routineBias(id: string, canMatch: boolean) {
     roll: -1,
     brake: -4,
     backspin: -4,
+    stembass: 4,
+    vocalout: 3,
+    instrumentalin: 3,
+    acapella: 2,
+    drumswap: 2,
   }
   const free: Record<string, number> = {
     echo: 4,
@@ -576,6 +608,16 @@ export function gridTrust(track: Track) {
   return track.analysis?.gridConfidence ?? null
 }
 
+/** The key (Camelot) around a time: its section's key when analysis found
+ * one with some confidence, the whole-track key otherwise. */
+export function keyAt(track: Track, time: number) {
+  if (track.keyOverride) return track.camelot
+  const section = track.analysis?.keySections?.find(
+    (s) => time >= s.start && time < s.end && s.confidence >= 0.3
+  )
+  return section?.camelot ?? track.camelot
+}
+
 /** Where 16-bar phrases start: a corrected grid wins, then the detected
  * phrase alignment, then the first beat. */
 export function phraseOrigin(track: Track) {
@@ -784,29 +826,42 @@ export function planTransitions(
     (inKey.lock ? 0 : 12 * Math.log2(inRateHeard)) +
     inKey.shift -
     ((outKey.lock ? 0 : 12 * Math.log2(mixOutRate)) + outKey.shift)
-  const keys = heardKeys(out.camelot, incoming.camelot, relative)
   // Uncertain key estimates count less: pull them toward "unknown" (0.5).
+  // A key you set by hand is certain.
+  const keyConfidence = (track: Track) =>
+    track.keyOverride ? 1 : (track.analysis?.confidence ?? 0.4)
   const keyTrust = Math.min(
     1,
-    (out.analysis?.confidence ?? 0.4) / 0.4,
-    (incoming.analysis?.confidence ?? 0.4) / 0.4
+    keyConfidence(out) / 0.4,
+    keyConfidence(incoming) / 0.4
   )
   const intent = options.intent ?? "maintain"
-  const boost =
-    intent === "lift" && keys.out && keys.in
-      ? energyBoostMove(keys.out, keys.in)
-      : null
-  const harmonic =
-      0.5 +
-      ((boost
-        ? 0.8
-        : // Slightly detuned (15–35 cents) still blends; further apart, not.
-          Math.abs(keys.cents) > 35
-          ? 0.3
-          : keys.compatibility - (keys.detuned ? 0.1 : 0)) -
-        0.5) *
-        keyTrust,
-    pitchChanges = canMatch && Math.abs(relative) > 0.05
+  /** How two keys (Camelot) sit together as heard. */
+  const keyFit = (outCamelot: string | null, inCamelot: string | null) => {
+    const heard = heardKeys(outCamelot, inCamelot, relative)
+    const move =
+      intent === "lift" && heard.out && heard.in
+        ? energyBoostMove(heard.out, heard.in)
+        : null
+    return {
+      keys: heard,
+      boost: move,
+      harmonic:
+        0.5 +
+        ((move
+          ? 0.8
+          : // Slightly detuned (15–35 cents) still blends; further apart, not.
+            Math.abs(heard.cents) > 35
+            ? 0.3
+            : heard.compatibility - (heard.detuned ? 0.1 : 0)) -
+          0.5) *
+          keyTrust,
+    }
+  }
+  // Whole-track keys decide which routines are possible; each plan then
+  // judges the keys of the sections that actually overlap.
+  const { keys, harmonic } = keyFit(out.camelot, incoming.camelot)
+  const pitchChanges = canMatch && Math.abs(relative) > 0.05
   const keyTip =
     keys.out && keys.in && harmonic < 0.5
       ? keyShiftTip(keys.out, keys.in)
@@ -989,6 +1044,11 @@ export function planTransitions(
           }
         }
       outStart = outCue ?? Math.min(exitLatest, outStart)
+      // Keys of the overlapping sections, when analysis found per-section keys.
+      const fit = keyFit(
+        keyAt(out, outStart + duration / 2),
+        keyAt(incoming, inStart + inLength / 2)
+      )
       const clash = vocalClash(out, outStart, incoming, inStart, duration, rate)
       // What an 8-bar blend at these points would stack: short exits earn
       // that back, because they avoid the overlap a blend would cause.
@@ -1022,11 +1082,11 @@ export function planTransitions(
         blendFamily.includes(d.id) &&
         match &&
         duration >= beat * 32 &&
-        harmonic >= 0.9 &&
-        !boost &&
+        fit.harmonic >= 0.9 &&
+        !fit.boost &&
         !!out.camelot &&
         !!incoming.camelot &&
-        !keys.detuned
+        !fit.keys.detuned
       const entryEnergy = energyAt(incoming, inStart, inLength)
       const scoreParts = [
         { label: "Routine", value: routineBias(d.id, canMatch) },
@@ -1068,10 +1128,10 @@ export function planTransitions(
         {
           label: "Keys",
           value:
-            (longOverlap ? (harmonic - 0.5) * 10 * profile.keyWeight : 0) +
+            (longOverlap ? (fit.harmonic - 0.5) * 10 * profile.keyWeight : 0) +
             (keySafe ? 2 : 0) +
-            (boost && longOverlap ? 3 : 0) -
-            (keys.detuned && longOverlap ? 5 : 0),
+            (fit.boost && longOverlap ? 3 : 0) -
+            (fit.keys.detuned && longOverlap ? 5 : 0),
         },
         {
           // Two voices or leads at once: long blends suffer most. Short
@@ -1104,18 +1164,18 @@ export function planTransitions(
                 "Tempo gap exceeds an 8% adjustment or the deck’s pitch range; no forced beatmatch.",
               ]
             : []),
-        ...(pitchChanges && match && keys.detuned
+        ...(pitchChanges && match && fit.keys.detuned
           ? [
-              `Tempo change shifts pitch: the incoming track sounds about ${Math.abs(keys.cents)} cents off the outgoing one. Keep melodic overlap short, or turn on key lock.`,
+              `Tempo change shifts pitch: the incoming track sounds about ${Math.abs(fit.keys.cents)} cents off the outgoing one. Keep melodic overlap short, or turn on key lock.`,
             ]
-          : pitchChanges && match && keys.in !== incoming.camelot
+          : pitchChanges && match && fit.keys.in !== incoming.camelot
             ? [
-                `Tempo change shifts pitch: the incoming key sounds as ${keys.in}. Turn on key lock to keep ${incoming.camelot}.`,
+                `Tempo change shifts pitch: the incoming key sounds as ${fit.keys.in}. Turn on key lock to keep ${incoming.camelot}.`,
               ]
             : []),
         ...(!out.camelot || !incoming.camelot
           ? ["Key analysis is incomplete. Listen for melody clashes."]
-          : harmonic < 0.8 && longOverlap
+          : fit.harmonic < 0.8 && longOverlap
             ? [
                 "Source keys are distant: reduce melodic overlap. A mix may still work by ear.",
               ]
@@ -1204,7 +1264,7 @@ export function planTransitions(
               ? `Genre jump ${profile.label}: bridging transitions preferred`
               : `Style: ${profile.label} (${profile.blendBars}-bar blends)`,
             out.camelot && incoming.camelot
-              ? `${keys.out} → ${keys.in}${keys.in !== incoming.camelot ? ` (heard; source ${incoming.camelot})` : ""}: ${boost ? `energy-boost key move (${boost})` : keySafe ? "key-safe harmonic blend" : keys.detuned && match ? "detuned by the tempo change" : harmonic >= 0.8 ? "keys compatible" : "favor less melodic overlap"}`
+              ? `${fit.keys.out} → ${fit.keys.in}${fit.keys.in !== incoming.camelot ? ` (heard; source ${incoming.camelot})` : ""}: ${fit.boost ? `energy-boost key move (${fit.boost})` : keySafe ? "key-safe harmonic blend" : fit.keys.detuned && match ? "detuned by the tempo change" : fit.harmonic >= 0.8 ? "keys compatible" : "favor less melodic overlap"}`
               : "Keys unverified; audition the overlap",
             ...(keyTip && longOverlap
               ? [
@@ -1276,6 +1336,13 @@ export function planTransitions(
         profile,
         beat,
         position,
+        recent: options.recent ?? [],
+      })
+    )
+    .concat(
+      stemRoutines(planned, out, incoming, {
+        intent,
+        profile,
         recent: options.recent ?? [],
       })
     )
@@ -1467,6 +1534,304 @@ function effectRoutines(
           },
         ],
         "The next track rises out of a low-pass filter while the outgoing track keeps the groove, so it arrives gradually."
+      )
+    )
+  return routines
+}
+
+/**
+ * Routines built on stems, derived from planned blends: the same exit and
+ * entry, with stem levels moving during the overlap. They need prepared
+ * stems on the tracks involved (and loaded on the decks to sound).
+ */
+function stemRoutines(
+  plans: Transition[],
+  out: Track,
+  incoming: Track,
+  c: {
+    intent: MixIntent
+    profile: ReturnType<typeof pairProfile>
+    recent: string[]
+  }
+): Transition[] {
+  const outStems = !!out.stems,
+    inStems = !!incoming.stems
+  if (!outStems && !inStems) return []
+  const blend = plans.find((p) => p.id === "blend"),
+    bass = plans.find((p) => p.id === "bass"),
+    long = plans.find((p) => p.id === "long")
+  const vocal = (track: Track, start: number, length: number) =>
+    vocalAt(track, start, length) ?? 0
+  const variant = (
+    base: Transition,
+    id: string,
+    name: string,
+    lessonId: string,
+    stemMoves: StemMove[],
+    why: string,
+    benefit: number,
+    removesClash: boolean,
+    steps: Transition["steps"]
+  ): Transition => {
+    const technique = techniques.find((t) => t.id === lessonId)!
+    const scoreParts = [
+      ...(base.scoreParts ?? []).filter(
+        (p) =>
+          !["Routine", "Energy goal", "Genre", "Variety"].includes(p.label) &&
+          !(removesClash && p.label === "Vocals")
+      ),
+      { label: "Routine", value: routineBias(id, base.beatmatch) },
+      { label: "Energy goal", value: intentFit[c.intent][id] ?? 0 },
+      { label: "Genre", value: profileBonus(c.profile, id) },
+      { label: "Stems", value: benefit },
+      { label: "Variety", value: c.recent.slice(-3).includes(id) ? -9 : 0 },
+    ]
+      .map((p) => ({ ...p, value: Math.round(p.value * 10) / 10 }))
+      .filter((p) => p.value !== 0)
+    return {
+      ...base,
+      id,
+      name,
+      description: why,
+      labels: technique.labels,
+      difficulty: technique.level,
+      execution:
+        base.execution === "bass" && id !== "instrumentalin"
+          ? "blend"
+          : base.execution,
+      stemMoves,
+      vocalClash: removesClash ? 0 : base.vocalClash,
+      scoreParts,
+      score: total(scoreParts),
+      steps,
+      reasons: [
+        `Uses prepared stems: ${why.charAt(0).toLowerCase()}${why.slice(1)}`,
+        ...base.reasons,
+      ],
+    }
+  }
+  const step = (at: number, label: string, why: string) => ({ at, label, why })
+  const routines: Transition[] = []
+  const clashRelief = (base: Transition) =>
+    Math.min(14, (base.vocalClash ?? 0) * 40)
+  if (outStems && inStems && bass?.beatmatch) {
+    const swap = bass.bassSwapAt ?? 0.5
+    routines.push(
+      variant(
+        bass,
+        "stembass",
+        "Stem bass swap",
+        "bass",
+        [
+          {
+            deck: "in",
+            stem: "bass",
+            from: 0,
+            to: 1,
+            start: swap - 0.01,
+            end: swap,
+          },
+          {
+            deck: "out",
+            stem: "bass",
+            from: 1,
+            to: 0,
+            start: swap,
+            end: swap + 0.01,
+          },
+        ],
+        "The basslines swap exactly on the phrase while both kicks and grooves stay full.",
+        4,
+        false,
+        [
+          step(
+            0,
+            "Bring in the groove",
+            "The incoming track plays without its bassline."
+          ),
+          step(
+            swap,
+            "Swap basslines",
+            "The outgoing bass stem drops as the incoming one arrives."
+          ),
+          step(
+            0.85,
+            "Hand over",
+            "The outgoing track fades out with no bass under it."
+          ),
+        ]
+      )
+    )
+  }
+  if (outStems && blend && vocal(out, blend.outStart, blend.duration) >= 0.25)
+    routines.push(
+      variant(
+        blend,
+        "vocalout",
+        "Vocal out",
+        "vocal",
+        [
+          { deck: "out", stem: "vocals", from: 1, to: 0, start: 0, end: 0.4 },
+          ...(inStems
+            ? [
+                {
+                  deck: "in" as const,
+                  stem: "vocals" as const,
+                  from: 0,
+                  to: 1,
+                  start: 0.45,
+                  end: 0.6,
+                },
+              ]
+            : []),
+        ],
+        "The outgoing vocal fades out while the incoming instrumental takes over.",
+        clashRelief(blend) + 2,
+        true,
+        [
+          step(
+            0,
+            "Fade the vocal",
+            "The outgoing vocal stem lowers as the next track enters."
+          ),
+          step(
+            0.45,
+            "New voice",
+            "The incoming vocal arrives only after the old one has gone."
+          ),
+          step(0.85, "Hand over", "The outgoing instrumental fades out."),
+        ]
+      )
+    )
+  if (
+    inStems &&
+    bass &&
+    vocal(incoming, bass.inStart, bass.duration * bass.rate) >= 0.25
+  )
+    routines.push(
+      variant(
+        bass,
+        "instrumentalin",
+        "Instrumental in",
+        "vocal",
+        [{ deck: "in", stem: "vocals", from: 0, to: 1, start: 0.9, end: 1 }],
+        "The incoming track enters without its vocal until the outgoing one has finished.",
+        clashRelief(bass) + 2,
+        true,
+        [
+          step(
+            0,
+            "Instrumental first",
+            "The incoming vocal stem stays muted under the outgoing track."
+          ),
+          step(
+            bass.bassSwapAt ?? 0.5,
+            "Swap basslines",
+            "The incoming bass takes over on the phrase."
+          ),
+          step(
+            0.9,
+            "Vocal in",
+            "The incoming vocal returns once the outgoing track has gone."
+          ),
+        ]
+      )
+    )
+  const acapellaBase = long ?? blend
+  if (
+    outStems &&
+    acapellaBase?.beatmatch &&
+    acapellaBase.keySafe &&
+    vocal(out, acapellaBase.outStart, acapellaBase.duration) >= 0.35
+  )
+    routines.push(
+      variant(
+        acapellaBase,
+        "acapella",
+        "Acapella over",
+        "acapella",
+        [
+          { deck: "out", stem: "drums", from: 1, to: 0, start: 0.05, end: 0.2 },
+          { deck: "out", stem: "bass", from: 1, to: 0, start: 0.05, end: 0.2 },
+          {
+            deck: "out",
+            stem: "melody",
+            from: 1,
+            to: 0,
+            start: 0.05,
+            end: 0.25,
+          },
+          ...(inStems
+            ? [
+                {
+                  deck: "in" as const,
+                  stem: "vocals" as const,
+                  from: 0,
+                  to: 1,
+                  start: 0.9,
+                  end: 1,
+                },
+              ]
+            : []),
+        ],
+        "The outgoing vocal rides alone over the incoming instrumental, a live mashup.",
+        clashRelief(acapellaBase) + 3,
+        true,
+        [
+          step(
+            0.05,
+            "Strip to the acapella",
+            "Drums, bass and melody leave the outgoing track."
+          ),
+          step(
+            0.3,
+            "Vocal over the new beat",
+            "Matching keys let the acapella sit on the incoming groove."
+          ),
+          step(
+            0.9,
+            "Close",
+            "The acapella fades and the incoming vocal returns."
+          ),
+        ]
+      )
+    )
+  if (outStems && inStems && blend?.beatmatch)
+    routines.push(
+      variant(
+        blend,
+        "drumswap",
+        "Drum swap",
+        "percussion",
+        [
+          { deck: "in", stem: "bass", from: 0, to: 1, start: 0.5, end: 0.55 },
+          { deck: "in", stem: "melody", from: 0, to: 1, start: 0.5, end: 0.6 },
+          { deck: "in", stem: "vocals", from: 0, to: 1, start: 0.5, end: 0.6 },
+          {
+            deck: "out",
+            stem: "drums",
+            from: 1,
+            to: 0,
+            start: 0.45,
+            end: 0.55,
+          },
+        ],
+        "The incoming drums take over first, then the rest of the track follows.",
+        2,
+        false,
+        [
+          step(
+            0,
+            "New drums",
+            "Only the incoming drum stem plays under the outgoing track."
+          ),
+          step(
+            0.45,
+            "Swap the beat",
+            "The outgoing drums drop; the incoming bass and melody arrive."
+          ),
+          step(0.85, "Hand over", "The outgoing track fades out."),
+        ]
       )
     )
   return routines
@@ -1796,6 +2161,9 @@ const family: Record<string, string> = {
   drop: "dropswap",
   double: "doubledrop",
   fake: "fakedrop",
+  acapella: "acapella",
+  mashup: "acapella",
+  percussion: "drumswap",
 }
 export type ReadinessStatus =
   "Ready" | "Possible with prep" | "Not for this pair" | "Not supported yet"
@@ -1874,9 +2242,10 @@ export function techniqueReadiness(plans: Transition[]) {
             "Bridge the styles with a cut or FX exit on a phrase."
           )
     }
-    const plan = plans.find(
-      (p) => p.id === (family[technique.id] ?? technique.id)
-    )
+    const plan =
+      technique.id === "vocal"
+        ? plans.find((p) => p.id === "vocalout" || p.id === "instrumentalin")
+        : plans.find((p) => p.id === (family[technique.id] ?? technique.id))
     if (plan)
       return result(
         technique,
@@ -1899,8 +2268,8 @@ export function techniqueReadiness(plans: Transition[]) {
     if (["vocal", "acapella", "mashup", "percussion"].includes(technique.id))
       return result(
         technique,
-        "Not supported yet",
-        "Requires stem separation; there is no vocal separation or density detection yet."
+        "Possible with prep",
+        "Prepare stems for both tracks (on the deck or in the library); vocal routines also need a vocal in the overlap."
       )
     if (technique.id === "multideck")
       return result(

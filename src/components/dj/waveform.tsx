@@ -27,6 +27,10 @@ import { Icon } from "./icons"
 
 export type WaveformZone = { start: number; end: number; label: string }
 
+// Shared so an empty deck's peaks keep one identity; a fresh [] each render
+// re-ran the paint effect, which set state, which rendered again: forever.
+const NO_PEAKS: number[] = []
+
 export function Artwork({
   color = "lime",
   small = false,
@@ -77,7 +81,7 @@ export function Waveform({
   zoomable?: boolean
   heading?: ReactNode
 }) {
-  const peaks = track?.analysis?.peaks ?? []
+  const peaks = track?.analysis?.peaks ?? NO_PEAKS
   const { theme, waveStyle } = useDJ()
   const fullDuration = track?.duration || 1
   const minimum = Math.min(fullDuration, Math.max(1, 240 / (track?.bpm || 120)))

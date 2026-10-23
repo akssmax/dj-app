@@ -1,4 +1,6 @@
 import type { DeckState, Transition } from "./types"
+import { allStemsOn } from "./stem-matrix"
+import type { StemGains } from "./stem-matrix"
 
 const clamp = (p: number) => Math.max(0, Math.min(1, p))
 const ramp = (p: number, from: number, to: number) => {
@@ -80,4 +82,25 @@ export function automationControls(
           }
         : { ...saved.fx, enabled: false },
   }
+}
+
+/** A deck's stem levels at a point of the transition, or null when the plan
+ * doesn't move that deck's stems. */
+export function stemGainsAt(
+  plan: Transition,
+  deck: "out" | "in",
+  progress: number
+): StemGains | null {
+  const moves = plan.stemMoves?.filter((move) => move.deck === deck)
+  if (!moves?.length) return null
+  const gains: StemGains = { ...allStemsOn }
+  for (const move of moves) {
+    const t = ramp(
+      clamp(progress),
+      move.start,
+      Math.max(move.start + 1e-6, move.end)
+    )
+    gains[move.stem] = move.from + (move.to - move.from) * t
+  }
+  return gains
 }

@@ -6,11 +6,13 @@ import {
   mergeLibraryAnalysis,
 } from "@/lib/dj/library-analysis"
 import type { Track } from "@/lib/dj/types"
+import { analysisOutdated } from "@/lib/dj/structure"
 
 export function useLibraryAnalysis(
   tracks: Track[],
   ready: boolean,
-  save: (original: Track, analyzed: Track) => void
+  save: (original: Track, analyzed: Track) => void,
+  useModels = true
 ) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -31,8 +33,9 @@ export function useLibraryAnalysis(
     const next = tracks.find(
       (t) =>
         libraryAnalyzable(t) &&
-        // Older analyses lack vocal/phrase structure; refresh them too.
-        (!t.analysis || !t.analysis.vocals) &&
+        // Older analyses lack vocal/phrase structure or the current tempo,
+        // grid and key analysis; refresh them too.
+        (!t.analysis || !t.analysis.vocals || analysisOutdated(t.analysis)) &&
         !attempted.current.has(linkedFingerprint(t))
     )
     if (!next) return
@@ -43,7 +46,7 @@ export function useLibraryAnalysis(
       Object.fromEntries(Object.entries(prior).filter(([id]) => id !== next.id))
     )
     attempted.current.add(linkedFingerprint(next))
-    void analyzeLibraryTrack(next, controller.signal)
+    void analyzeLibraryTrack(next, controller.signal, useModels)
       .then((result) => {
         if (!controller.signal.aborted)
           save(

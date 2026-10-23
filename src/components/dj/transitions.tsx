@@ -24,6 +24,7 @@ import {
 import { useDJ, useTransitionPlan, useEngine } from "./provider"
 import { Icon } from "./icons"
 import { MidiInputText } from "./midi-activity"
+import { SetArcView, SetQueue } from "./set-flow"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Link } from "@tanstack/react-router"
@@ -618,6 +619,8 @@ export function TransitionCoach() {
   )
   if (!coachOpen) return null
   const running = automix.active || state.auto
+  // Set mode shows the arc and the planned queue instead of one next card.
+  const setMode = database.session.setPlan.follow
   const barsUntil = plan
     ? Math.max(
         0,
@@ -933,7 +936,7 @@ export function TransitionCoach() {
           </Button>
         </div>
       </div>
-      <div className="automix-flow">
+      <div className="automix-flow" data-set={setMode || undefined}>
         <div className="automix-deck" data-deck={outId}>
           <span className="automix-eyebrow">
             {out.playing ? "NOW PLAYING" : "OUTGOING"} · DECK {outId}
@@ -955,139 +958,149 @@ export function TransitionCoach() {
               : "Deck is empty"}
           </span>
         </div>
-        <div className="automix-bridge">
-          <div className="automix-bridge-head">
-            {/* The routine name doubles as the Style picker. */}
-            <Select
-              value={database.session.transitionTechnique ?? "auto"}
-              onValueChange={(value) =>
-                value && setTransitionTechnique(value === "auto" ? null : value)
-              }
-            >
-              <SelectTrigger
-                className="automix-style"
-                aria-label={`Transition style${state.auto ? " for the next mix" : ""}`}
-                title={
-                  state.auto
-                    ? "Choose the routine for the next mix"
-                    : "Choose the routine, or let Auto pick the best fit"
+        <div className="automix-bridge" data-split={setMode || undefined}>
+          {setMode && <SetArcView />}
+          <div className="automix-bridge-main">
+            <div className="automix-bridge-head">
+              {/* The routine name doubles as the Style picker. */}
+              <Select
+                value={database.session.transitionTechnique ?? "auto"}
+                onValueChange={(value) =>
+                  value &&
+                  setTransitionTechnique(value === "auto" ? null : value)
                 }
               >
-                <SelectValue>
-                  <strong>
-                    {(state.auto && state.autoPlan?.name) ||
-                      plan?.name ||
-                      "No transition yet"}
-                  </strong>
-                  {!database.session.transitionTechnique && <small>Auto</small>}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="auto">Auto pick · best fit</SelectItem>
-                {transitionChoices.map((candidate) => (
-                  <SelectItem key={candidate.id} value={candidate.id}>
-                    {candidate.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <span>{countdown}</span>
-          </div>
-          <MixTags plan={state.auto ? state.autoPlan : plan} />
-          <div
-            className="automix-lane"
-            data-mixing={state.auto || undefined}
-            style={
-              {
-                "--approach": `${approach * 100}%`,
-                "--mix": `${Math.min(1, Math.max(0, progress)) * 100}%`,
-              } as CSSProperties
-            }
-            role="progressbar"
-            aria-label="Automix progress"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(
-              (state.auto ? state.transition : approach) * 100
-            )}
-          >
-            <span className="lane-approach" />
-            <span className="lane-mix" />
-          </div>
-          <div className="automix-bridge-foot">
-            <Button
-              variant="ghost"
-              size="xs"
-              className="coach-cue-trigger"
-              disabled={!plan || running}
-              aria-label="Choose transition cue pair"
-              title="Choose exit and entry cues"
-              onClick={() => {
-                setInitialTab("cues")
-                setDetailsTab("explore")
-                setDetails(true)
-              }}
-            >
-              <span>
-                {outId} out {formatTime(plan?.outStart ?? 0)}
-              </span>
-              <Icon name="right" size={12} />
-              <span>
-                {inId} in {formatTime(plan?.inStart ?? 0)}
-              </span>
-            </Button>
-            <span
-              className="automix-guidance"
-              aria-live="polite"
-              title={
-                state.auto
-                  ? `Channel mixing · crossfader 50%. ${state.autoLevels}`
-                  : report
-                    ? report.tips[0]
-                    : instruction
+                <SelectTrigger
+                  className="automix-style"
+                  aria-label={`Transition style${state.auto ? " for the next mix" : ""}`}
+                  title={
+                    state.auto
+                      ? "Choose the routine for the next mix"
+                      : "Choose the routine, or let Auto pick the best fit"
+                  }
+                >
+                  <SelectValue>
+                    <strong>
+                      {(state.auto && state.autoPlan?.name) ||
+                        plan?.name ||
+                        "No transition yet"}
+                    </strong>
+                    {!database.session.transitionTechnique && (
+                      <small>Auto</small>
+                    )}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto pick · best fit</SelectItem>
+                  {transitionChoices.map((candidate) => (
+                    <SelectItem key={candidate.id} value={candidate.id}>
+                      {candidate.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <span>{countdown}</span>
+            </div>
+            <MixTags plan={state.auto ? state.autoPlan : plan} />
+            <div
+              className="automix-lane"
+              data-mixing={state.auto || undefined}
+              style={
+                {
+                  "--approach": `${approach * 100}%`,
+                  "--mix": `${Math.min(1, Math.max(0, progress)) * 100}%`,
+                } as CSSProperties
               }
+              role="progressbar"
+              aria-label="Automix progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(
+                (state.auto ? state.transition : approach) * 100
+              )}
             >
-              {report
-                ? `${report.title} · ${report.score}/100`
-                : automix.active && !state.auto
-                  ? automix.message
-                  : state.auto
-                    ? state.autoStatus === "Waiting for the exit zone"
-                      ? `${state.autoStatus} · ${formatTime(Math.max(0, ((state.autoPlan?.outStart ?? plan?.outStart ?? 0) - out.position) / out.rate))}`
-                      : state.autoStatus
-                    : instruction}
-            </span>
+              <span className="lane-approach" />
+              <span className="lane-mix" />
+            </div>
+            <div className="automix-bridge-foot">
+              <Button
+                variant="ghost"
+                size="xs"
+                className="coach-cue-trigger"
+                disabled={!plan || running}
+                aria-label="Choose transition cue pair"
+                title="Choose exit and entry cues"
+                onClick={() => {
+                  setInitialTab("cues")
+                  setDetailsTab("explore")
+                  setDetails(true)
+                }}
+              >
+                <span>
+                  {outId} out {formatTime(plan?.outStart ?? 0)}
+                </span>
+                <Icon name="right" size={12} />
+                <span>
+                  {inId} in {formatTime(plan?.inStart ?? 0)}
+                </span>
+              </Button>
+              <span
+                className="automix-guidance"
+                aria-live="polite"
+                title={
+                  state.auto
+                    ? `Channel mixing · crossfader 50%. ${state.autoLevels}`
+                    : report
+                      ? report.tips[0]
+                      : instruction
+                }
+              >
+                {report
+                  ? `${report.title} · ${report.score}/100`
+                  : automix.active && !state.auto
+                    ? automix.message
+                    : state.auto
+                      ? state.autoStatus === "Waiting for the exit zone"
+                        ? `${state.autoStatus} · ${formatTime(Math.max(0, ((state.autoPlan?.outStart ?? plan?.outStart ?? 0) - out.position) / out.rate))}`
+                        : state.autoStatus
+                      : instruction}
+              </span>
+            </div>
           </div>
         </div>
-        <div
-          className="automix-deck automix-next"
-          data-deck={inId}
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          <span className="automix-eyebrow">
-            {automix.phase === "selecting"
-              ? "PREPARING"
-              : next
-                ? "AUTOMIX PICK"
-                : "NEXT UP"}{" "}
-            · DECK {inId}
-          </span>
-          <strong title={nextTitle}>{nextTitle}</strong>
-          {upcoming && out.track ? (
-            <span className="automix-chips">
-              {fit.map((chip) => (
-                <span key={chip.label} data-fit={chip.fit} title={chip.hint}>
-                  {chip.label}
-                </span>
-              ))}
+        {setMode ? (
+          <SetQueue deck={inId} />
+        ) : (
+          <div
+            className="automix-deck automix-next"
+            data-deck={inId}
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <span className="automix-eyebrow">
+              {automix.phase === "selecting"
+                ? "PREPARING"
+                : next
+                  ? "AUTOMIX PICK"
+                  : "NEXT UP"}{" "}
+              · DECK {inId}
             </span>
-          ) : (
-            <span className="automix-meta">
-              {`${scopeLabel} · ${playableCount} playable`}
-            </span>
-          )}
-        </div>
+            <strong title={nextTitle}>{nextTitle}</strong>
+            {upcoming && out.track ? (
+              <span className="automix-chips">
+                {fit.map((chip) => (
+                  <span key={chip.label} data-fit={chip.fit} title={chip.hint}>
+                    {chip.label}
+                  </span>
+                ))}
+              </span>
+            ) : (
+              <span className="automix-meta">
+                {`${scopeLabel} · ${playableCount} playable`}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </Card>
   )

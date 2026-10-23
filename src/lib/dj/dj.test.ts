@@ -13,7 +13,7 @@ import {
   needsStructureRefresh,
   outgoingDeck,
 } from "./engine"
-import { VOCALS_VERSION } from "./structure"
+import { ANALYSIS_VERSION, VOCALS_VERSION } from "./structure"
 import { demoTracks } from "./tracks"
 import { techniques, genreGuide } from "./lessons"
 import type { Track } from "./types"
@@ -25,6 +25,7 @@ import { AutomixSession } from "./automix-session"
 import { measurePeaks, waveformPath } from "./wave-peaks"
 
 vi.mock("./pitch-control", () => ({
+  PITCH_LATENCY: 0.053,
   registerPitch: vi.fn(async () => {}),
   createPitchNode: (context: ContextMock) => {
     const node = context.createGain() as NodeMock & {
@@ -63,6 +64,7 @@ const analyzed: Track = {
     },
     vocals: [0, 0],
     vocalsVersion: VOCALS_VERSION,
+    analysisVersion: ANALYSIS_VERSION,
     energyCurve: [],
     bpm: 128,
     beatOffset: 0,
@@ -293,7 +295,7 @@ describe("musical transition planning", () => {
     expect(catalog).toHaveLength(28)
     expect(catalog.find((t) => t.technique.id === "drop")?.plan).toBeUndefined()
     expect(catalog.find((t) => t.technique.id === "vocal")?.reason).toContain(
-      "no vocal"
+      "Prepare stems"
     )
     expect(
       catalog.find((t) => t.technique.id === "multideck")?.reason
@@ -790,7 +792,7 @@ describe("audio transport and automix lock", () => {
     expect(engine.state.B.playing).toBe(true)
     expect(engine.state.B.track).toBe(original)
     const retried = engine.analyze("B")
-    vi.advanceTimersByTime(60000)
+    vi.advanceTimersByTime(180000)
     expect(await retried).toBe(false)
     expect(engine.state.B.analysisError).toContain("timed out")
     expect(engine.state.B.playing).toBe(true)
@@ -990,7 +992,19 @@ describe("audio transport and automix lock", () => {
     expect(source.detune.value).toBe(0)
     expect(source.playbackRate.value).toBe(1)
     await vi.advanceTimersByTimeAsync(200)
-    expect(engine.state.A.position).toBeCloseTo(0.2)
+    // A plain Play starts from the cue; the playhead waits for the key-lock
+    // delay so it shows what you hear.
+    expect(source.start.mock.calls[0][1]).toBe(0)
+    expect(engine.state.A.position).toBeCloseTo(0.2 - 0.053)
+  })
+  it("starts a scheduled key-locked deck early so it lands on time", async () => {
+    await engine.load("B", incoming)
+    await engine.setKeyLock("B", true)
+    const at = ContextMock.latest.currentTime + 0.5
+    await engine.play("B", 10, at)
+    const source = ContextMock.latest.sources.at(-1)!
+    expect(source.start.mock.calls[0][0]).toBeCloseTo(at - 0.053, 5)
+    expect(source.start.mock.calls[0][1]).toBe(10)
   })
   it("keeps a sync follower aligned while shifting the master's pitch", async () => {
     await engine.load("A", { ...analyzed, bpm: 120 })
@@ -1000,14 +1014,24 @@ describe("audio transport and automix lock", () => {
     expect(engine.state.B.syncTo).toBe("A")
     expect(engine.state.B.rate).toBe(1)
   })
-  it("enables pitch compensation without restarting the playing source and keeps jog rate mirrored", async () => {
+  it("enables pitch compensation on the grid and keeps jog rate mirrored", async () => {
     await engine.load("A", analyzed)
     await engine.play("A")
-    const source = ContextMock.latest.sources.at(-1)!
+    const first = ContextMock.latest.sources.at(-1)!
+    await vi.advanceTimersByTimeAsync(1000)
+    const heardAt = () =>
+      (engine as unknown as { position: (id: "A") => number }).position("A")
+    const heard = heardAt()
     await engine.setKeyLock("A", true)
     expect(engine.state.A.keyLock).toBe(true)
-    expect(ContextMock.latest.sources).toHaveLength(1)
-    expect(source.stop).not.toHaveBeenCalled()
+    // Entering the key-lock path restarts the source one delay ahead, so
+    // what you hear stays where the playhead is.
+    expect(first.stop).toHaveBeenCalled()
+    expect(engine.state.A.playing).toBe(true)
+    const source = ContextMock.latest.sources.at(-1)!
+    expect(source).not.toBe(first)
+    expect(source.start.mock.calls[0][1]).toBeCloseTo(heard + 0.053, 2)
+    expect(heardAt()).toBeCloseTo(heard, 2)
     engine.setParam("A", "rate", 1.08)
     expect(source.playbackRate.value).toBe(1.08)
     const pitch = (
@@ -1292,6 +1316,98 @@ describe("audio transport and automix lock", () => {
     await vi.advanceTimersByTimeAsync(60000)
     expect(engine.state.B.rate).toBeCloseTo(1, 5)
     expect(engine.state.auto).toBe(true)
+  })
+  it("moves trims smoothly when a mix starts and after it lands", async () => {
+    await engine.load("A", analyzed)
+    await engine.load("B", incoming)
+    engine.setParam("A", "trim", 2)
+    const plan = planTransitions(analyzed, incoming, 0, {
+      outCue: 4,
+      inCue: 90,
+    }).find((candidate) => candidate.id === "bass")!
+    await engine.startAuto("A", plan)
+    // The playing deck keeps its trim until the transition starts.
+    expect(engine.state.A.trim).toBe(2)
+    const samples: number[] = []
+    for (let t = 0; t < 4200 + plan.duration * 1000 + 8000; t += 100) {
+      await vi.advanceTimersByTimeAsync(100)
+      samples.push(engine.state.B.trim, engine.state.A.trim)
+    }
+    expect(engine.state.auto).toBe(false)
+    const steps = samples
+      .slice(2)
+      .map((value, i) => Math.abs(value - samples[i]))
+    expect(Math.max(...steps)).toBeLessThan(1)
+  })
+  it("keeps the trim knob gliding when Automix arms the next mix", async () => {
+    await engine.load("A", analyzed)
+    await engine.load("B", incoming)
+    await engine.play("B")
+    // Deck B just took over: its trim is settling from -0.5 to 3.8 dB.
+    const internals = engine as unknown as {
+      trimGlides: Record<string, unknown>
+      tempoGlides: Record<string, unknown>
+      automation: { original: Record<string, { trim: number }> } | null
+    }
+    engine.state.B.trim = -0.5
+    internals.trimGlides.B = {
+      from: -0.5,
+      to: 3.8,
+      start: ContextMock.latest.currentTime,
+      tau: 1.3,
+    }
+    // As after a real mix, the deck is also easing back to native tempo;
+    // that must not hold the trim knob still.
+    internals.tempoGlides.B = {
+      from: 1.008,
+      to: 1,
+      start: ContextMock.latest.currentTime,
+      duration: 60,
+    }
+    const next = planTransitions(incoming, analyzed, 0, {
+      outCue: 120,
+    }).find((candidate) => candidate.id === "bass")!
+    await engine.startAuto("B", next)
+    // Arming the next mix must not jump the knob to the settled level...
+    expect(engine.state.B.trim).toBeLessThan(0)
+    // ...but the mix plans with the level the deck is settling to.
+    expect(internals.automation?.original.B.trim).toBe(3.8)
+    const knob: number[] = []
+    for (let i = 0; i < 80; i++) {
+      await vi.advanceTimersByTimeAsync(100)
+      knob.push(engine.state.B.trim)
+    }
+    const steps = knob.slice(1).map((value, i) => Math.abs(value - knob[i]))
+    expect(Math.max(...steps)).toBeLessThan(1)
+    expect(knob.at(-1)).toBeCloseTo(3.8, 1)
+  })
+  it("moves the filter frequency with its type so a filter exit never mutes or bursts", async () => {
+    await engine.load("A", analyzed)
+    await engine.load("B", incoming)
+    await engine.play("A")
+    const filter = (
+      engine as unknown as { channels: { A: { filter: NodeMock } } }
+    ).channels.A.filter
+    // Record the frequency at the moment the type changes.
+    const switches: [string, number][] = []
+    let type = filter.type
+    Object.defineProperty(filter, "type", {
+      get: () => type,
+      set: (value: string) => {
+        switches.push([value, filter.frequency.value])
+        type = value
+      },
+    })
+    const plan = planTransitions(analyzed, incoming, 0, {
+      outCue: 4,
+      inCue: 90,
+    }).find((candidate) => candidate.id === "filter")!
+    await engine.startAuto("A", plan)
+    await vi.advanceTimersByTimeAsync(4500)
+    const highpass = switches.find(([value]) => value === "highpass")
+    expect(highpass).toBeDefined()
+    // A high-pass left at the low-pass's 22 kHz silences the deck.
+    expect(highpass![1]).toBeLessThan(100)
   })
   it("rides the outgoing tempo up to the next track before a ramped mix", async () => {
     const out = { ...analyzed, genre: "House", bpm: 124 },
@@ -1799,6 +1915,15 @@ describe("audio transport and automix lock", () => {
     expect(engine.state.B.track?.grid).toBeUndefined()
     expect(engine.state.B.track?.bpm).toBeNull()
     expect(AnalysisWorkerMock.instances).toHaveLength(2)
+  })
+  it("re-runs a full analysis for tracks analyzed by an older version", async () => {
+    const older = { ...analyzed.analysis!, analysisVersion: 1 }
+    await engine.load("A", { ...analyzed, analysis: older })
+    const worker = AnalysisWorkerMock.instances.at(-1)!
+    expect(worker.postMessage).toHaveBeenCalledWith(
+      expect.not.objectContaining({ waveformOnly: true }),
+      expect.anything()
+    )
   })
   it("backfills 3-band waveform data in a worker for older analyses", async () => {
     const older = { ...analyzed.analysis! }

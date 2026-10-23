@@ -16,6 +16,7 @@ import {
   arcAt,
   arcCurve,
   arcOptions,
+  arcStep,
   phaseLabel,
   suggestTempo,
 } from "@/lib/dj/set-plan"
@@ -23,6 +24,8 @@ import type { SetPhase } from "@/lib/dj/set-plan"
 import type { Track } from "@/lib/dj/types"
 
 const lengths = [
+  { minutes: 15, label: "15 min" },
+  { minutes: 20, label: "20 min" },
   { minutes: 30, label: "30 min" },
   { minutes: 60, label: "1 hour" },
   { minutes: 90, label: "1½ hours" },
@@ -30,17 +33,33 @@ const lengths = [
   { minutes: 0, label: "Until the playlist ends" },
 ]
 
-/** The set's energy arc as a small line chart with a "you are here" dot. */
-function ArcChart({
+/** Where an upcoming track sits on the arc, with its own energy. */
+export type ArcMark = {
+  id: string
+  fraction: number
+  energy: number
+  label: string
+  next: boolean
+}
+
+/** The set's energy arc as a line chart with a "you are here" dot and,
+ * optionally, the planned tracks' energies along the way. */
+export function ArcChart({
   points,
   at,
+  marks = [],
+  width = 300,
+  height = 72,
+  className = "set-arc",
 }: {
   points: { fraction: number; energy: number; phase: SetPhase }[]
   at: number | null
+  marks?: ArcMark[]
+  width?: number
+  height?: number
+  className?: string
 }) {
-  const width = 300,
-    height = 72,
-    pad = 6
+  const pad = 6
   const x = (f: number) => pad + f * (width - pad * 2)
   const y = (e: number) => height - pad - ((e - 1) / 9) * (height - pad * 2)
   const line = points
@@ -58,7 +77,7 @@ function ArcChart({
   )
   return (
     <svg
-      className="set-arc"
+      className={className}
       viewBox={`0 0 ${width} ${height}`}
       role="img"
       aria-label={
@@ -77,7 +96,28 @@ function ArcChart({
           className="set-arc-bound"
         />
       ))}
+      {at !== null && (
+        <rect
+          x={pad}
+          y={pad}
+          width={Math.max(0, x(at) - pad)}
+          height={height - pad * 2}
+          className="set-arc-played"
+        />
+      )}
       <polyline points={line} className="set-arc-line" />
+      {marks.map((mark) => (
+        <circle
+          key={mark.id}
+          cx={x(mark.fraction)}
+          cy={y(mark.energy)}
+          r={mark.next ? 4.5 : 3.5}
+          className="set-arc-mark"
+          data-next={mark.next || undefined}
+        >
+          <title>{mark.label}</title>
+        </circle>
+      ))}
       {here && at !== null && (
         <circle cx={x(at)} cy={y(here.energy)} r={5} className="set-arc-here" />
       )}
@@ -85,32 +125,20 @@ function ArcChart({
   )
 }
 
-/** Whole-set planning: the arc, its settings and the next planned tracks. */
-export function SetPlanner() {
-  const {
-    database,
-    automix,
-    tracks,
-    scopeTracks,
-    setSetPlan,
-    pinAutomix,
-    skipAutomix,
-  } = useDJ()
+/**
+ * The next track, then the tracks the lookahead planned after it, each with
+ * where it lands on the arc and the routine and effects it would use from
+ * the one before.
+ */
+export function useSetUpcoming() {
+  const { database, automix, tracks, scopeTracks } = useDJ()
   const { out } = useTransitionPlan()
   const settings = database.session.setPlan
-  const points = useMemo(() => arcCurve(settings), [settings])
-  const suggested = useMemo(() => suggestTempo(scopeTracks), [scopeTracks])
   const set = automix.set
-  const target = set ?? {
-    ...arcAt(settings, 0),
-    fraction: null as number | null,
-  }
   const byId = useMemo(
     () => new Map(tracks.map((track) => [track.id, track])),
     [tracks]
   )
-  // The next track, then the tracks the lookahead planned after it, each
-  // with the routine and effects it would use from the one before.
   const upcoming = useMemo(() => {
     const ids = [automix.nextId, ...(set?.upcoming ?? [])].filter(
       (id): id is string => !!id
@@ -120,7 +148,10 @@ export function SetPlanner() {
       .filter((track): track is Track => !!track)
     let from = out.track
     return list.map((track, index) => {
-      const fraction = Math.min(1, (set?.fraction ?? 0) + index * 0.06)
+      const fraction = Math.min(
+        1,
+        (set?.fraction ?? 0) + index * arcStep(settings, scopeTracks.length)
+      )
       const goal = arcAt(settings, fraction)
       const plan = from
         ? planTransitions(from, track, 0, {
@@ -133,18 +164,47 @@ export function SetPlanner() {
           })[0]
         : undefined
       from = track
-      return { track, plan, next: index === 0 && !!automix.nextId }
+      return {
+        track,
+        plan,
+        fraction,
+        goal: goal.energy,
+        next: index === 0 && !!automix.nextId,
+      }
     })
   }, [
     automix.nextId,
     set?.upcoming,
     set?.fraction,
+    scopeTracks.length,
     byId,
     out.track,
     settings,
     database.session.fxAmount,
     database.session.recentFX,
   ])
+  return upcoming
+}
+
+/** Whole-set planning: the arc, its settings and the next planned tracks. */
+export function SetPlanner() {
+  const {
+    database,
+    automix,
+    scopeTracks,
+    setSetPlan,
+    pinAutomix,
+    skipAutomix,
+  } = useDJ()
+  const settings = database.session.setPlan
+  const points = useMemo(() => arcCurve(settings), [settings])
+  const suggested = useMemo(() => suggestTempo(scopeTracks), [scopeTracks])
+  const set = automix.set
+  const target = set ?? {
+    ...arcAt(settings, 0),
+    fraction: null as number | null,
+  }
+  const upcoming = useSetUpcoming()
   return (
     <div className="set-planner">
       <label className="set-follow">

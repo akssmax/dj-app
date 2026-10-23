@@ -5,6 +5,7 @@ import { AsciiBackdrop } from "@/components/marketing/ascii-backdrop"
 import { CompareTable } from "@/components/marketing/compare"
 import { AutomixSection } from "@/components/marketing/sections/automix"
 import { LearnSection } from "@/components/marketing/sections/learn"
+import { VisualsSection } from "@/components/marketing/sections/visuals"
 import { FeaturesSection } from "@/components/marketing/sections/features"
 import {
   ThemesSection,
@@ -61,7 +62,7 @@ const roadmap = [
   {
     when: "Later",
     title: "v1.x",
-    body: "Stems, four decks and MIDI learn for any controller.",
+    body: "Live stems, four decks and MIDI learn for any controller.",
   },
 ]
 
@@ -193,6 +194,7 @@ function HomePage() {
       </section>
 
       <AutomixSection />
+      <VisualsSection palette={palette} />
       <LearnSection />
       <FeaturesSection />
       <ThemesSection theme={theme} onTheme={setTheme} />
@@ -212,15 +214,24 @@ function HomePage() {
             <h3>Where Cue is behind today</h3>
             <ul>
               <li>Two decks only. Four-deck mixing is on the roadmap.</li>
-              <li>No stem separation or streaming services yet.</li>
+              <li>
+                Stems are prepared before you play, not separated live. No
+                streaming services yet.
+              </li>
               <li>
                 The DDJ-FLX4 is the only mapped controller. MIDI learn is
                 planned.
               </li>
               <li>
-                BPM, key and phrase markers are estimates. Trust your ears.
+                Analysis is strong on our tests but still in beta. Fix a key,
+                beat 1 or section when it is wrong.
               </li>
             </ul>
+          </div>
+          <div className="site-actions site-actions-start">
+            <Link to="/compare" className="site-btn">
+              See the full comparison →
+            </Link>
           </div>
         </div>
       </section>

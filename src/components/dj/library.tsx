@@ -248,6 +248,7 @@ export function Library() {
       rescanMusicFolder,
       reconnectMusicFolder,
       libraryAnalysis,
+      stems,
     } = useDJ(),
     loaded = useEngine((state) => ({
       A: state.A.track?.id,
@@ -422,6 +423,42 @@ export function Library() {
           >
             Save view
           </Button>
+          {(() => {
+            const missing = filtered.filter(
+              (t) =>
+                !t.stems && libraryAnalyzable(t) && !stems.queue.includes(t.id)
+            )
+            const running = stems.active
+              ? tracks.find((t) => t.id === stems.active!.id)
+              : null
+            return running ? (
+              <Button
+                variant="outline"
+                size="sm"
+                title="Stop preparing stems"
+                onClick={stems.cancel}
+              >
+                Stems · {running.title} ·{" "}
+                {Math.round(stems.active!.fraction * 100)}%
+                {stems.queue.length > 1
+                  ? ` · ${stems.queue.length - 1} more`
+                  : ""}
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!missing.length}
+                title="Separate vocals, drums, bass and melody for every track in this view, one at a time in the background. The first time downloads a 126 MB model."
+                onClick={() => {
+                  stems.prepare(missing.map((t) => t.id))
+                  notify(`Preparing stems for ${missing.length} tracks.`)
+                }}
+              >
+                Prepare stems{missing.length ? ` (${missing.length})` : ""}
+              </Button>
+            )
+          })()}
         </div>
       </div>
       {!folderLinkSupported && (

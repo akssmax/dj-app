@@ -3,13 +3,16 @@ import { Button } from "@/components/ui/button"
 import { outgoingDeck } from "@/lib/dj/engine"
 import { SceneDirector } from "@/lib/dj/visuals/director"
 import { VisualDriver } from "@/lib/dj/visuals/features"
+import { colorModes, toLinear } from "@/lib/dj/visuals/palettes"
+import type { ColorMode, ThemeColors } from "@/lib/dj/visuals/palettes"
 import { VisualRenderer } from "@/lib/dj/visuals/renderer"
 import { scenes } from "@/lib/dj/visuals/scenes"
 import { useDJ, useEngine } from "./provider"
 import { Icon } from "./icons"
 
 const SCENE_KEY = "cue-visual-scene",
-  AUTO_KEY = "cue-visual-auto"
+  AUTO_KEY = "cue-visual-auto",
+  COLORS_KEY = "cue-visual-colors"
 const stored = (key: string) => {
   try {
     return localStorage.getItem(key)
@@ -25,8 +28,37 @@ const store = (key: string, value: string) => {
   }
 }
 
+/**
+ * The active theme's deck and waveform colors in linear light. Theme tokens
+ * may be color-mix() expressions, so let the browser resolve each one and
+ * read the painted pixel back.
+ */
+function readThemeColors(): ThemeColors | null {
+  const probe = document.createElement("span"),
+    paint = document.createElement("canvas").getContext("2d", {
+      willReadFrequently: true,
+    })
+  if (!paint) return null
+  document.body.appendChild(probe)
+  const read = (token: string) => {
+    probe.style.color = `var(${token})`
+    paint.clearRect(0, 0, 1, 1)
+    paint.fillStyle = getComputedStyle(probe).color
+    paint.fillRect(0, 0, 1, 1)
+    return toLinear([...paint.getImageData(0, 0, 1, 1).data.slice(0, 3)])
+  }
+  const colors = {
+    deckA: read("--primary"),
+    deckB: read("--orange"),
+    low: read("--wave-low"),
+    mid: read("--wave-mid"),
+  }
+  probe.remove()
+  return colors
+}
+
 export function Visualizer() {
-  const { engine } = useDJ()
+  const { engine, theme } = useDJ()
   const stage = useRef<HTMLDivElement>(null),
     canvas = useRef<HTMLCanvasElement>(null),
     fps = useRef<HTMLSpanElement>(null)
@@ -36,10 +68,22 @@ export function Visualizer() {
     [auto, setAuto] = useState(() => stored(AUTO_KEY) !== "off"),
     [error, setError] = useState<string | null>(null),
     [idle, setIdle] = useState(false),
-    [full, setFull] = useState(false)
+    [full, setFull] = useState(false),
+    [colors, setColors] = useState<ColorMode>(() => {
+      const saved = stored(COLORS_KEY)
+      return colorModes.some((mode) => mode.id === saved)
+        ? (saved as ColorMode)
+        : "spectrum"
+    }),
+    [themeColors, setThemeColors] = useState<ThemeColors | null>(null)
+  // The shell sets data-theme in an effect; read the tokens after it lands.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setThemeColors(readThemeColors()))
+    return () => cancelAnimationFrame(frame)
+  }, [theme])
   // The frame loop reads these through refs so it never restarts.
-  const live = useRef({ auto })
-  live.current = { auto }
+  const live = useRef({ auto, colors, themeColors })
+  live.current = { auto, colors, themeColors }
   const director = useRef<SceneDirector | null>(null)
   director.current ??= new SceneDirector(scene)
 
@@ -70,6 +114,8 @@ export function Visualizer() {
       const interval = now - last,
         dt = Math.min(interval / 1000, 0.1)
       last = now
+      driver.colorMode = live.current.colors
+      driver.themeColors = live.current.themeColors
       const events = driver.update(dt),
         state = engine.getSnapshot(),
         lead = outgoingDeck(state),
@@ -174,6 +220,29 @@ export function Visualizer() {
         </div>
         <div className="visualizer-actions">
           <span ref={fps} className="visualizer-fps" />
+          <div
+            className="visualizer-colors"
+            role="radiogroup"
+            aria-label="Colors"
+          >
+            {colorModes.map((mode) => (
+              <Button
+                key={mode.id}
+                size="xs"
+                variant={colors === mode.id ? "secondary" : "ghost"}
+                role="radio"
+                aria-checked={colors === mode.id}
+                aria-pressed={colors === mode.id}
+                title={mode.hint}
+                onClick={() => {
+                  setColors(mode.id)
+                  store(COLORS_KEY, mode.id)
+                }}
+              >
+                {mode.label}
+              </Button>
+            ))}
+          </div>
           <Button
             size="xs"
             variant={auto ? "secondary" : "ghost"}

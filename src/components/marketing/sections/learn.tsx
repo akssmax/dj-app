@@ -63,7 +63,7 @@ export function LearnSection() {
           </div>
           <figure className="site-shot">
             <img
-              src="/marketing/learn.jpg"
+              src="/marketing/learn.webp"
               alt="Learn & Play in Cue: the live guidance card with beat and bar count above both decks, with shaded entry and exit zones on the waveforms"
               loading="lazy"
             />

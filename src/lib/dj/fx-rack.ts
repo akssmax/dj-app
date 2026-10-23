@@ -24,6 +24,8 @@ export type FXRack = {
   flangeFeedback: GainNode
   flangeWet: GainNode
   echoSend: GainNode
+  /** Where other sources (a stem tap) feed the echo, after its send. */
+  echoInput: AudioNode
   echoDelay: DelayNode
   echoFeedback: GainNode
   reverbSend: GainNode
@@ -99,6 +101,7 @@ export function createFXRack(
     flangeFeedback,
     flangeWet,
     echoSend,
+    echoInput: echoFilter,
     echoDelay: echoDelayNode,
     echoFeedback,
     reverbSend,
@@ -158,6 +161,8 @@ export type CueTiming = {
   overlayInput: AudioNode
   master: AudioNode
   noise: () => AudioBuffer
+  /** The deck's vocal stem tap into the echo, when stems are loaded. */
+  vocalTap?: GainNode
 }
 
 const beatsAt = (bpm: number, rate: number, beats: number) =>
@@ -190,8 +195,13 @@ export function scheduleCue(
       f.exponentialRampToValueAtTime(RACK_REST.low, t1)
       return []
     }
+    case "vocalEcho":
     case "echo": {
-      const send = rack.echoSend.gain,
+      // Without stems on the deck, a vocal echo echoes the whole track.
+      const send =
+          cue.kind === "vocalEcho" && timing.vocalTap
+            ? timing.vocalTap.gain
+            : rack.echoSend.gain,
         feedback = rack.echoFeedback.gain
       rack.echoDelay.delayTime.setValueAtTime(
         echoDelay(bpm, rate, cue.beats ?? 1),

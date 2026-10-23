@@ -205,7 +205,7 @@ export function FeaturesSection() {
               exit on both waveforms and explains why.
             </p>
             <img
-              src="/marketing/transition.jpg"
+              src="/marketing/transition.webp"
               alt="Parallel waveforms with suggested entry and exit cues next to the transition assistant's ranked list of moves"
               loading="lazy"
             />

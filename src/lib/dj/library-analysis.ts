@@ -11,7 +11,10 @@ export function libraryAnalyzable(track: Track) {
   )
 }
 
-async function libraryAudio(track: Track, signal: AbortSignal): Promise<Blob> {
+export async function libraryAudio(
+  track: Track,
+  signal: AbortSignal
+): Promise<Blob> {
   if (track.linkedFile) return readLinkedFile(track.linkedFile)
   if (track.file) return track.file
   if (track.url) {
@@ -23,7 +26,11 @@ async function libraryAudio(track: Track, signal: AbortSignal): Promise<Blob> {
 }
 
 // One file at a time; decoding never starts playback or replaces a deck.
-export async function analyzeLibraryTrack(track: Track, signal: AbortSignal) {
+export async function analyzeLibraryTrack(
+  track: Track,
+  signal: AbortSignal,
+  useModels = true
+) {
   const file = await libraryAudio(track, signal)
   if (file.size > 80 * 1024 * 1024)
     throw new Error(
@@ -56,7 +63,8 @@ export async function analyzeLibraryTrack(track: Track, signal: AbortSignal) {
         fail(
           new Error("Analysis timed out. Retry when the device is less busy.")
         ),
-      60000
+      // The beat model can add a one-time 10 MB download.
+      180000
     )
     signal.addEventListener("abort", abort, { once: true })
     worker.onmessage = (event: MessageEvent<Analysis>) => {
@@ -71,7 +79,7 @@ export async function analyzeLibraryTrack(track: Track, signal: AbortSignal) {
         buffer.getChannelData(c).slice()
       )
       worker.postMessage(
-        { channels, sampleRate: buffer.sampleRate },
+        { channels, sampleRate: buffer.sampleRate, useModels },
         channels.map((c) => c.buffer)
       )
     } catch (error) {
@@ -90,9 +98,15 @@ export function mergeLibraryAnalysis(
     ...track,
     analysis,
     duration,
-    bpm: track.grid?.bpm ?? track.bpm ?? analysis.bpm,
-    key: analysis.key,
-    camelot: analysis.camelot,
+    // A corrected grid or tag BPM stays; our own earlier estimate is replaced.
+    bpm:
+      track.grid?.bpm ??
+      (track.analysis && track.bpm === track.analysis.bpm
+        ? (analysis.bpm ?? track.bpm)
+        : (track.bpm ?? analysis.bpm)),
+    // A key you set by hand outlives re-analysis.
+    key: track.keyOverride ? track.key : analysis.key,
+    camelot: track.keyOverride ?? analysis.camelot,
     energy: analysis.energy,
   }
 }

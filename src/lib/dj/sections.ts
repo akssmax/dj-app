@@ -9,8 +9,8 @@ const cache = new WeakMap<Analysis, LabeledSection[]>()
 /**
  * Label a track's arrangement like rekordbox phrase analysis (Intro, Up,
  * Chorus/Drop, Down, Outro) bar by bar, from levels analysis already stores:
- * bass, mids, highs and loudness, each relative to the track's own levels.
- * Estimates only.
+ * bass (the bass and drum stems when prepared), mids, highs and loudness,
+ * each relative to the track's own levels. Estimates only.
  *
  * - drop: 4+ bars with full bass and close to the track's fullest sound
  * - breakdown: 4+ bars with the bass pulled out, after the track has started
@@ -19,6 +19,8 @@ const cache = new WeakMap<Analysis, LabeledSection[]>()
  * - body: everything else (grooves with lighter elements between drops)
  */
 export function labelSections(track: Track): LabeledSection[] {
+  // Sections you edited by hand always win.
+  if (track.sectionOverride?.length) return track.sectionOverride
   const analysis = track.analysis
   if (!analysis?.energyCurve.length || track.duration <= 0) return []
   const cached = cache.get(analysis)
@@ -41,11 +43,18 @@ export function labelSections(track: Track): LabeledSection[] {
   for (let t = origin > 0.05 ? origin + bar : bar; t < duration - 0.5; t += bar)
     starts.push(t)
   const ends = [...starts.slice(1), duration]
+  // With stems, "bass in" is the bass and drum stems themselves rather than
+  // the low frequency band, which pads and kicks share.
+  const stems = analysis.stemLevels
   const raw = starts.map((start, i) => {
     const end = ends[i],
       loud = mean(analysis.energyCurve, start, end)
     return {
-      low: bands?.low.length ? mean(bands.low, start, end) : loud,
+      low: stems
+        ? mean(stems.bass, start, end) + 0.6 * mean(stems.drums, start, end)
+        : bands?.low.length
+          ? mean(bands.low, start, end)
+          : loud,
       mid: bands?.mid.length ? mean(bands.mid, start, end) : loud,
       high: bands?.high.length ? mean(bands.high, start, end) : loud,
       loud,

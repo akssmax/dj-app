@@ -123,6 +123,23 @@ export function planFX(
           ]
     )
 
+  // A stem routine fading the outgoing vocal: echo the vocal alone as it goes.
+  const vocalFade = plan.stemMoves?.find(
+    (move) => move.deck === "out" && move.stem === "vocals" && move.to === 0
+  )
+  if (vocalFade)
+    options.push([
+      cue(
+        "vocalEcho",
+        "out",
+        Math.max(0, vocalFade.end * duration - beat * 2),
+        beat * 2,
+        0.75,
+        "Echo on the outgoing vocal as it fades",
+        1
+      ),
+    ])
+
   // A vocal still running at the end of a blend: echo its last word out.
   if (layered.includes(plan.execution) && exitVocal)
     options.push([

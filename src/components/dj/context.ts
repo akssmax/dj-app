@@ -54,6 +54,19 @@ export type DJContextValue = {
     errors: Record<string, string>
     retry: (id?: string) => void
   }
+  /** Stem separation queue (one track at a time, in the background). */
+  stems: {
+    queue: string[]
+    active: {
+      id: string
+      stage: "download" | "separate" | "store"
+      fraction: number
+    } | null
+    errors: Record<string, string>
+    prepare: (ids: string[]) => void
+    cancel: () => void
+    remove: (id: string) => Promise<void>
+  }
   linkMusicFolder: () => Promise<void>
   rescanMusicFolder: (id: string) => Promise<void>
   reconnectMusicFolder: (id: string) => Promise<void>
@@ -108,6 +121,14 @@ export type DJContextValue = {
   setMixPace: (value: MixPace) => void
   setFXAmount: (value: FXAmount) => void
   setSetPlan: (value: Partial<SetSettings>) => void
+  setAnalysisModels: (value: boolean) => void
+  /** Your key for a track (Camelot), or null to use the detected key. */
+  setTrackKey: (trackId: string, camelot: string | null) => void
+  /** Your arrangement sections for a track, or null to use detection. */
+  setTrackSections: (
+    trackId: string,
+    sections: NonNullable<Track["sectionOverride"]> | null
+  ) => void
   setTransitionTechnique: (value: string | null) => void
   transitionPreview: boolean
   setTransitionPreview: (value: boolean) => void

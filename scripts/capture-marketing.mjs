@@ -1,4 +1,6 @@
-// Capture real studio UI for the landing page (public/marketing/*.jpg).
+// Capture real studio UI for the landing page (public/marketing/*.webp).
+// Screenshots are taken as JPEG, then converted to WebP with cwebp
+// (`brew install webp`), about half the size.
 // Needs a running dev server and a Playwright install:
 //   PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core \
 //   CHROME=/path/to/chrome \
@@ -137,3 +139,21 @@ await page.screenshot({
 })
 console.log("learn.jpg")
 await browser.close()
+
+const { readdirSync, rmSync } = await import("node:fs")
+for (const dir of [out, `${out}thumbs/`])
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".jpg"))) {
+    const jpg = `${dir}${file}`
+    execFileSync("cwebp", [
+      "-quiet",
+      "-q",
+      "80",
+      "-m",
+      "6",
+      jpg,
+      "-o",
+      jpg.replace(/\.jpg$/, ".webp"),
+    ])
+    rmSync(jpg)
+  }
+console.log("converted to WebP")

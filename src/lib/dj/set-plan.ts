@@ -265,3 +265,13 @@ export function phaseBonus(id: string, phase: SetPhase, usedInPhase: string[]) {
     (share ? Math.round(3 + share * 20) : 0) - (abrupt ? 4 : 0) - (slow ? 8 : 0)
   )
 }
+
+/**
+ * How far along the arc one track moves the set: about 3½ minutes per track
+ * at DJ pace, or an even share of the playlist when the set has no length.
+ */
+export function arcStep(settings: SetSettings, tracksInSet: number) {
+  return settings.minutes > 0
+    ? 210 / (settings.minutes * 60)
+    : 1 / Math.max(1, tracksInSet)
+}

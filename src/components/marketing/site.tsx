@@ -68,7 +68,9 @@ export function SiteLayout({
             <a href="/#automix">Automix</a>
             <a href="/#features">Features</a>
             <a href="/#themes">Themes</a>
-            <a href="/#compare">Compare</a>
+            <Link to="/compare" activeProps={{ "aria-current": "page" }}>
+              Compare
+            </Link>
             <Link to="/roadmap" activeProps={{ "aria-current": "page" }}>
               Roadmap
             </Link>
@@ -113,12 +115,13 @@ function SiteFooter({ palette }: { palette: readonly [string, string] }) {
             <Link to="/app">DJ studio</Link>
             <Link to="/learn">Learn to mix</Link>
             <a href="/#automix">Automix</a>
+            <Link to="/automix-test">Automix test set</Link>
             <a href="/#themes">Themes</a>
           </nav>
           <nav aria-label="Project">
             <h3>Project</h3>
             <Link to="/roadmap">Roadmap</Link>
-            <a href="/#compare">Compare</a>
+            <Link to="/compare">Compare</Link>
             <a href="/#features">Features</a>
           </nav>
           <nav aria-label="Credits">
@@ -171,8 +174,8 @@ function SiteFooter({ palette }: { palette: readonly [string, string] }) {
         </span>
         <VisitorCount />
         <span className="footer-legal">
-          rekordbox, Serato, Traktor, djay and Beatport are trademarks of their
-          owners. Cue is not affiliated with them.
+          rekordbox, Serato, Traktor, djay, VirtualDJ and Beatport are
+          trademarks of their owners. Cue is not affiliated with them.
         </span>
         <a href="#content" className="footer-top-link">
           Back to top ↑

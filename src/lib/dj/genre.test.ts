@@ -258,3 +258,42 @@ describe("effect and arrangement routines", () => {
     expect(brake(96)).toBeGreaterThan(brake(128))
   })
 })
+
+describe("stem routines", () => {
+  const withStems = (track: Track, vocal: number): Track => ({
+    ...track,
+    stems: { format: "opus", device: "gpu", preparedAt: "2026-10-23" },
+    analysis: {
+      ...track.analysis!,
+      vocals: Array(track.duration).fill(vocal),
+    },
+  })
+  it("offers stem routines only when stems are prepared", () => {
+    const plain = planTransitions(arranged("a"), arranged("b"))
+    expect(plain.some((p) => p.stemMoves)).toBe(false)
+    const plans = planTransitions(
+      withStems(arranged("a"), 0.9),
+      withStems(arranged("b"), 0.9)
+    )
+    for (const id of ["stembass", "vocalout", "instrumentalin", "drumswap"])
+      expect(plans.find((p) => p.id === id)?.stemMoves?.length).toBeGreaterThan(
+        0
+      )
+  })
+  it("ranks vocal-safe stem routines above a plain blend when voices clash", () => {
+    const plans = planTransitions(
+      withStems(arranged("a"), 0.9),
+      withStems(arranged("b"), 0.9)
+    )
+    const score = (id: string) => plans.find((p) => p.id === id)!.score
+    expect(score("vocalout")).toBeGreaterThan(score("blend"))
+    expect(plans.find((p) => p.id === "vocalout")!.vocalClash).toBe(0)
+    const catalog = techniqueReadiness(plans)
+    expect(catalog.find((t) => t.technique.id === "vocal")?.status).toBe(
+      "Ready"
+    )
+    expect(catalog.find((t) => t.technique.id === "percussion")?.status).toBe(
+      "Ready"
+    )
+  })
+})

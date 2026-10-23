@@ -15,7 +15,16 @@ import studioCss from "../studio.css?url"
 import marketingCss from "../marketing.css?url"
 
 // Public pages render without the audio engine or studio shell.
-const marketingRoutes = new Set(["/", "/home", "/roadmap"])
+const marketingRoutes = new Set([
+  "/",
+  "/home",
+  "/roadmap",
+  "/compare",
+  "/automix-test",
+])
+
+const shareDescription =
+  "A free DJ studio in your browser: Automix that explains every transition, stems, a live mixing coach and DDJ-FLX4 support. No install; your music stays on your computer."
 
 export const Route = createRootRoute({
   head: () => ({
@@ -36,6 +45,30 @@ export const Route = createRootRoute({
           "Cue is a free browser DJ studio with a live mixing coach. Two decks. One mix.",
       },
       { name: "theme-color", content: "#0b0b0d" },
+      // Link previews on X/Twitter, Slack, iMessage and the like.
+      { property: "og:type", content: "website" },
+      { property: "og:site_name", content: "Cue" },
+      {
+        property: "og:title",
+        content: "Cue — the DJ studio that mixes with you",
+      },
+      { property: "og:description", content: shareDescription },
+      { property: "og:image", content: `${__SITE_URL__}/og.jpg` },
+      { property: "og:image:width", content: "1200" },
+      { property: "og:image:height", content: "630" },
+      {
+        property: "og:image:alt",
+        content:
+          "Cue: The DJ studio that mixes with you. Free in your browser.",
+      },
+      ...(__SITE_URL__ ? [{ property: "og:url", content: __SITE_URL__ }] : []),
+      { name: "twitter:card", content: "summary_large_image" },
+      {
+        name: "twitter:title",
+        content: "Cue — the DJ studio that mixes with you",
+      },
+      { name: "twitter:description", content: shareDescription },
+      { name: "twitter:image", content: `${__SITE_URL__}/og.jpg` },
     ],
     links: [
       {

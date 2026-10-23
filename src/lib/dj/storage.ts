@@ -3,7 +3,7 @@ import type { SetSettings } from "./set-plan"
 import type { FXAmount } from "./auto-fx"
 import { latestWriter } from "./latest-writer"
 import type { LinkedFolder } from "./linked-files"
-import { createStore, get, getMany, setMany } from "idb-keyval"
+import { createStore, del, get, getMany, set, setMany } from "idb-keyval"
 import type { DeckId, EnergyRating, MixIntent, MixPace, Track } from "./types"
 import type { ManualReport } from "./feedback"
 import type { StudioLayout, ThemeId } from "./themes"
@@ -54,6 +54,8 @@ export type LibraryDatabase = {
     recentFX: string[]
     /** Whole-set plan: energy arc, length and tempo path. */
     setPlan: SetSettings
+    /** Use the downloaded beat-tracking model during analysis. */
+    analysisModels: boolean
     transitionCues: Partial<
       Record<string, { entry: number | null; exit: number | null }>
     >
@@ -78,8 +80,8 @@ export const defaultDatabase: LibraryDatabase = {
   savedTransitions: {},
   transitionRatings: {},
   session: {
-    A: "edm",
-    B: "lift",
+    A: "club",
+    B: "july",
     master: 0.7,
     direction: "ltr",
     sidebarCollapsed: false,
@@ -93,6 +95,7 @@ export const defaultDatabase: LibraryDatabase = {
     fxAmount: "subtle",
     recentFX: [],
     setPlan: defaultSetSettings,
+    analysisModels: true,
     transitionCues: {},
     libraryTab: "all",
     density: "compact",
@@ -150,3 +153,11 @@ export function savedDeck(data: LibraryDatabase, id: DeckId, tracks: Track[]) {
     tracks.find((t) => t.id === data.session[id]) ?? tracks[id === "A" ? 0 : 1]
   )
 }
+
+/** Prepared stems, stored apart from the library snapshot (they are large). */
+export const saveStems = (trackId: string, record: unknown) =>
+  set(`stems:${trackId}`, record, getStore())
+export const readStems = <TRecord>(trackId: string) =>
+  get<TRecord>(`stems:${trackId}`, getStore())
+export const deleteStems = (trackId: string) =>
+  del(`stems:${trackId}`, getStore())

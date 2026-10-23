@@ -23,14 +23,23 @@ describe("analysis sample timing", () => {
         onmessage: undefined as
           | undefined
           | ((event: {
-              data: { channels: Float32Array[]; sampleRate: number }
-            }) => void),
+              data: {
+                channels: Float32Array[]
+                sampleRate: number
+                useModels: boolean
+              }
+            }) => Promise<void>),
         postMessage: vi.fn(),
       }
       vi.stubGlobal("self", worker)
       await import("./analysis.worker")
-      worker.onmessage!({
-        data: { channels: [new Float32Array(sampleRate)], sampleRate },
+      // Signal processing only: no model download in tests.
+      await worker.onmessage!({
+        data: {
+          channels: [new Float32Array(sampleRate)],
+          sampleRate,
+          useModels: false,
+        },
       })
       const options = detect.mock.calls[0][1]
       expect(options.timeStep).toBe(options.hopSize / sampleRate)

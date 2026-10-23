@@ -1,3 +1,4 @@
+import { useMemo } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -39,6 +40,16 @@ export function ParallelWaveforms() {
       (state[id].track?.bpm ?? 120)) /
     60
   const error = ((((phase("B") - phase("A") + 2) % 4) + 4) % 4) - 2
+  // Stable between ticks so the memoized cue rows skip the 20 Hz redraw.
+  const trackA = state.A.track,
+    trackB = state.B.track
+  const annotationsFor = useMemo(
+    () => ({
+      A: transitionAnnotations(trackA, plan, outId === "A"),
+      B: transitionAnnotations(trackB, plan, outId === "B"),
+    }),
+    [trackA, trackB, plan, outId]
+  )
   return (
     <Card className="parallel-panel">
       <div className="parallel-heading">
@@ -93,11 +104,7 @@ export function ParallelWaveforms() {
       </div>
       {(["A", "B"] as DeckId[]).map((id) => {
         const deck = state[id]
-        const annotations = transitionAnnotations(
-          deck.track,
-          plan,
-          id === outId
-        )
+        const annotations = annotationsFor[id]
         const anchor = annotations.cues[0]?.position ?? deck.position
         const plannedLength = plan
           ? plan.duration * (id === outId ? 1 : plan.rate)

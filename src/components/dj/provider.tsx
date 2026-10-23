@@ -65,6 +65,8 @@ import {
   mergeScannedTracks,
 } from "@/lib/dj/library-analysis"
 import { useLibraryAnalysis } from "./use-library-analysis"
+import { useStemQueue } from "./use-stem-queue"
+import { camelotKeys } from "@/lib/dj/key"
 
 export { useDJ }
 
@@ -242,7 +244,9 @@ export function DJProvider({ children }: { children: ReactNode }) {
                     ...current,
                     analysis: analyzed.analysis,
                     duration: analyzed.duration,
-                    bpm: current.grid?.bpm ?? current.bpm ?? analyzed.bpm,
+                    // The analyzed track already kept a corrected grid or
+                    // tag BPM and replaced our own earlier estimate.
+                    bpm: current.grid?.bpm ?? analyzed.bpm ?? current.bpm,
                     key: analyzed.key,
                     camelot: analyzed.camelot,
                     energy: analyzed.energy,
@@ -286,7 +290,35 @@ export function DJProvider({ children }: { children: ReactNode }) {
     }, 1000)
     return () => clearInterval(timer)
   }, [engine, update])
-  const libraryAnalysis = useLibraryAnalysis(tracks, ready, saveLibraryAnalysis)
+  const libraryAnalysis = useLibraryAnalysis(
+    tracks,
+    ready,
+    saveLibraryAnalysis,
+    database.session.analysisModels
+  )
+  useEffect(() => {
+    if (engine) engine.useAnalysisModels = database.session.analysisModels
+  }, [engine, database.session.analysisModels])
+  const saveTrackChange = useCallback(
+    (id: string, change: (track: Track) => Track) => {
+      update((db) => {
+        const existing = db.tracks.find((t) => t.id === id)
+        // Demo tracks live in code; their changes are stored as an override.
+        const base = existing ?? tracks.find((t) => t.id === id)
+        if (!base) return db
+        const next = change(base)
+        engineRef.current?.updateTrackMetadata(next)
+        return {
+          ...db,
+          tracks: existing
+            ? db.tracks.map((t) => (t.id === id ? next : t))
+            : [...db.tracks, next],
+        }
+      })
+    },
+    [update, tracks]
+  )
+  const stemQueue = useStemQueue(tracks, saveTrackChange)
 
   useEffect(() => {
     let disposed = false
@@ -1124,6 +1156,7 @@ export function DJProvider({ children }: { children: ReactNode }) {
     rescanMusicFolder: (id) => connectFolder(id, true),
     reconnectMusicFolder: (id) => connectFolder(id),
     libraryAnalysis,
+    stems: stemQueue,
     libraryTab,
     setLibraryTab,
     libraryQuery,
@@ -1204,8 +1237,8 @@ export function DJProvider({ children }: { children: ReactNode }) {
         ...db,
         session: {
           ...db.session,
-          A: dj.state.A.track?.id ?? "edm",
-          B: dj.state.B.track?.id ?? "lift",
+          A: dj.state.A.track?.id ?? "club",
+          B: dj.state.B.track?.id ?? "july",
           master: dj.state.master,
         },
       }))
@@ -1256,6 +1289,25 @@ export function DJProvider({ children }: { children: ReactNode }) {
       }))
       automixRef.current?.refresh()
     },
+    setTrackKey: (trackId, camelot) =>
+      saveTrackChange(trackId, (track) => {
+        const named = camelotKeys.find((k) => k.camelot === camelot)
+        return camelot && named
+          ? { ...track, keyOverride: camelot, camelot, key: named.name }
+          : {
+              ...track,
+              keyOverride: undefined,
+              camelot: track.analysis?.camelot ?? null,
+              key: track.analysis?.key ?? null,
+            }
+      }),
+    setTrackSections: (trackId, sections) =>
+      saveTrackChange(trackId, (track) => ({
+        ...track,
+        sectionOverride: sections ?? undefined,
+      })),
+    setAnalysisModels: (analysisModels) =>
+      update((db) => ({ ...db, session: { ...db.session, analysisModels } })),
     setSetPlan: (change) => {
       update((db) => ({
         ...db,

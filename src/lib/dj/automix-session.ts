@@ -3,7 +3,7 @@ import type { DJEngine } from "./engine"
 import { recommendTracks } from "./library-scope"
 import type { LibraryDatabase } from "./storage"
 import type { DeckId, Track } from "./types"
-import { arcAt, setProgress } from "./set-plan"
+import { arcAt, arcStep, setProgress } from "./set-plan"
 import type { SetPhase } from "./set-plan"
 
 export type AutomixState = {
@@ -286,11 +286,7 @@ export class AutomixSession {
       this.played.size,
       remaining
     )
-    // About 3½ minutes per track at DJ pace.
-    const step =
-      settings.minutes > 0
-        ? 210 / (settings.minutes * 60)
-        : 1 / Math.max(1, this.played.size + remaining)
+    const step = arcStep(settings, this.played.size + remaining)
     const now = arcAt(settings, fraction)
     if (this.usage.phase !== now.phase)
       this.usage = { phase: now.phase, ids: [] }

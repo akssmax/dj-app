@@ -49,6 +49,10 @@ const phases: Phase[] = [
         body: "Linked USB folders, on-device BPM, key and energy analysis, playlists and ratings.",
       },
       {
+        title: "Stems",
+        body: "Vocals, drums, bass and melody separated on your device, with five stem transitions in Automix.",
+      },
+      {
         title: "DDJ-FLX4 support",
         body: "Pads, Beat FX, Smart CFX, jog scratch and LED feedback with a practice report.",
       },
@@ -99,8 +103,8 @@ const phases: Phase[] = [
         body: "Map any controller, not just the FLX4.",
       },
       {
-        title: "Stems",
-        body: "Vocal, drum and bass separation, plus the stem lessons that need it.",
+        title: "Live stems",
+        body: "Separate as a track loads instead of beforehand, plus the stem lessons that need it.",
       },
       {
         title: "Four decks",

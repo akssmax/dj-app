@@ -3,9 +3,11 @@ import { demoTracks } from "./tracks"
 import { recommendTracks } from "./library-scope"
 import {
   arcAt,
+  arcStep,
   defaultSetSettings,
   phaseBonus,
   setFit,
+  setProgress,
   suggestTempo,
 } from "./set-plan"
 import type { SetSettings } from "./set-plan"
@@ -169,5 +171,14 @@ describe("looking ahead", () => {
     )
     expect(pick.track.id).toBe(bridge.id)
     expect(pick.path[0].camelot).toBe("10A")
+  })
+})
+
+describe("short sets", () => {
+  it("covers the whole arc in a 15-minute set", () => {
+    const short = { ...defaultSetSettings, minutes: 15 }
+    // About four tracks fit, so each moves the set a quarter of the way.
+    expect(arcStep(short, 26)).toBeCloseTo(210 / 900, 5)
+    expect(setProgress(short, 15 * 60, 4, 22)).toBe(1)
   })
 })

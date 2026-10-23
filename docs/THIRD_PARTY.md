@@ -9,6 +9,16 @@ Cue uses the unmodified `@soundtouchjs/audio-worklet` 2.1.1 processor bundle, in
 
 The processor asset is loaded locally from the installed package. Cue's MIDI decoder, continuous scratch reader, routing, UI and controller presets are separate app code.
 
+# Analysis and stem models
+
+Cue downloads these models once, keeps them in the browser's Cache Storage, and runs them on the user's device; no audio is uploaded. Each download URL is pinned to a published revision in `src/lib/dj/models.ts`.
+
+- **Beat This!** beat and downbeat tracker (small model): Francesco Foscarin, Jan Schlüter and Gerhard Widmer, "Beat This! Accurate Beat Tracking Without DBN Postprocessing", ISMIR 2024, CPJKU / Johannes Kepler University Linz. Code and weights: MIT, https://github.com/CPJKU/beat_this. ONNX export used: `ashudesai/songbird-models` (MIT), `small0.onnx`.
+- **Hybrid Transformer Demucs (htdemucs)** stem separation: Simon Rouard, Francisco Massa and Alexandre Défossez, Meta AI. Code and weights: MIT, https://github.com/facebookresearch/demucs. Browser ONNX export used: `monteslu/htdemucs-web-onnx` (MIT), mixed precision, in 21 pieces.
+- **ONNX Runtime Web** (`onnxruntime-web` 1.30.0, Microsoft): MIT. It runs the models; its WebAssembly files are bundled with the app.
+
+The Krumhansl–Kessler key profiles and the analysis code in `src/lib/dj/key.ts`, `rhythm.ts`, `beat-model.ts` and `demucs.ts` are Cue's own implementations of published methods.
+
 # Landing page assets
 
 - **Bricolage Grotesque** (variable, Latin subset) by Mathieu Triay, from `@fontsource-variable/bricolage-grotesque` 5.3.0. SIL Open Font License 1.1. File: `public/fonts/bricolage/`, licence copy `public/fonts/bricolage/OFL.txt`.

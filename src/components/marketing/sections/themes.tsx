@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils"
 
 type Filter = "all" | "dark" | "light"
 
-export const mixerShot = (id: string) => `/marketing/mixer-${id}.jpg`
-const thumb = (id: string) => `/marketing/thumbs/mixer-${id}.jpg`
+export const mixerShot = (id: string) => `/marketing/mixer-${id}.webp`
+const thumb = (id: string) => `/marketing/thumbs/mixer-${id}.webp`
 
 export function ThemesSection({
   theme,

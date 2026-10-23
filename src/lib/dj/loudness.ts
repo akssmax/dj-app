@@ -127,8 +127,12 @@ export function matchLoudness(
   // The incoming track's trim once the outgoing deck is gone. Headroom below
   // only protects the overlap and is released after the mix.
   const settledInTrim = inTrim
-  // Bound the sum of both full-track sample peaks across the actual recipe.
-  // Positive EQ is conservatively included; FX exits reserve additional space.
+  // Bound the overlap's peak across the actual recipe. Two unrelated tracks
+  // add as power, not sample for sample: summing both peaks assumed they
+  // always land together and cut ordinary blends by 6-8 dB. The master
+  // limiter (-3 dB) catches the rare peak that does line up. Positive EQ is
+  // conservatively included; FX exits reserve additional space.
+  const overlap = (x: number, y: number) => Math.sqrt(x * x + y * y)
   const eqGain = (channel: AutomationChannel) =>
     10 **
     ((Math.max(0, channel.low) +
@@ -143,7 +147,7 @@ export function matchLoudness(
     const frame = automationFrame(plan, i / 256)
     combined = Math.max(
       combined,
-      aPeak * frame.outFader + bPeak * frame.inFader
+      overlap(aPeak * frame.outFader, bPeak * frame.inFader)
     )
   }
   if (["echo", "reverb"].includes(plan.execution)) combined *= 1.5
@@ -158,8 +162,10 @@ export function matchLoudness(
     const frame = automationFrame(plan, i / 256)
     remaining = Math.max(
       remaining,
-      aPeak * 10 ** ((outTrim - outBefore) / 20) * frame.outFader +
+      overlap(
+        aPeak * 10 ** ((outTrim - outBefore) / 20) * frame.outFader,
         bPeak * 10 ** ((inTrim - inBefore) / 20) * frame.inFader
+      )
     )
   }
   if (["echo", "reverb"].includes(plan.execution)) remaining *= 1.5

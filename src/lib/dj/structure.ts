@@ -20,8 +20,15 @@ const FRAME = 2048
 /** Bump when vocal detection changes so saved tracks are re-measured. */
 export const VOCALS_VERSION = 2
 
+/** Bump when tempo, grid, key or section analysis changes: older saved
+ * analyses are re-run in full, in the background. */
+export const ANALYSIS_VERSION = 2
+
+export const analysisOutdated = (analysis: { analysisVersion?: number }) =>
+  (analysis.analysisVersion ?? 1) < ANALYSIS_VERSION
+
 /** In-place radix-2 FFT. */
-function fft(re: Float64Array, im: Float64Array) {
+export function fft(re: Float64Array, im: Float64Array) {
   const n = re.length
   for (let i = 1, j = 0; i < n; i++) {
     let bit = n >> 1
@@ -233,32 +240,56 @@ export function phraseStructure(
       level(bands.high, t, t + bar) / scales[2],
       level(vocals, t, t + bar) * 1.5,
     ])
-  const span = 4
-  const novelty = bars.map((_, index) => {
-    if (index < span || index + span > bars.length) return 0
-    let distance = 0
-    for (let feature = 0; feature < 4; feature++) {
-      let before = 0,
-        after = 0
-      for (let k = 0; k < span; k++) {
-        before += bars[index - 1 - k][feature]
-        after += bars[index + k][feature]
+  // Change between the bars before and after each bar line, at two scales:
+  // 4 bars catches long sections, 2 bars catches short builds.
+  const noveltyAt = (span: number) =>
+    bars.map((_, index) => {
+      if (index < span || index + span > bars.length) return 0
+      let distance = 0
+      for (let feature = 0; feature < 4; feature++) {
+        let before = 0,
+          after = 0
+        for (let k = 0; k < span; k++) {
+          before += bars[index - 1 - k][feature]
+          after += bars[index + k][feature]
+        }
+        distance += Math.abs(after - before) / span
       }
-      distance += Math.abs(after - before) / span
-    }
-    return distance
-  })
-  // Phrase phase: the bar shift (0–15) whose 16-bar lines catch most change.
+      return distance
+    })
+  const wide = noveltyAt(4),
+    narrow = noveltyAt(2)
+  const novelty = wide.map((value, index) => value + 0.5 * narrow[index])
+  const mean =
+    novelty.reduce((sum, v) => sum + v, 0) / Math.max(1, novelty.length)
+  const deviation = Math.sqrt(
+    novelty.reduce((sum, v) => sum + (v - mean) ** 2, 0) /
+      Math.max(1, novelty.length)
+  )
+  // Peaks: local maxima above the typical level, at least 2 bars apart.
+  const peaks = novelty
+    .map((value, index) => ({ value, index }))
+    .filter(
+      ({ value, index }) =>
+        value > mean + 0.75 * deviation &&
+        value >= (novelty[index - 1] ?? 0) &&
+        value > (novelty[index + 1] ?? 0)
+    )
+    .sort((a, b) => b.value - a.value)
+    .filter((peak, i, all) =>
+      all.slice(0, i).every((other) => Math.abs(other.index - peak.index) >= 2)
+    )
+    .sort((a, b) => a.index - b.index)
+  // Phrase phase: the bar shift (0–15) whose 16-bar lines hold the most
+  // change, from peaks only so broad novelty can't drag it off by a bar or two.
   let shift = 0,
     best = -Infinity
   for (let candidate = 0; candidate < 16; candidate++) {
-    let sum = 0,
-      count = 0
-    for (let index = candidate; index < novelty.length; index += 16) {
-      sum += novelty[index]
-      count++
-    }
-    const score = count ? sum / count : 0
+    let score = 0
+    for (const peak of peaks)
+      if ((((peak.index - candidate) % 16) + 16) % 16 === 0) score += peak.value
+      else if ((((peak.index - candidate) % 4) + 4) % 4 === 0)
+        score += peak.value * 0.5
     if (score > best + 1e-9) {
       best = score
       shift = candidate
@@ -266,24 +297,12 @@ export function phraseStructure(
   }
   let phraseOffset = beatOffset + shift * bar
   while (phraseOffset - bar * 16 >= 0) phraseOffset -= bar * 16
-  const mean =
-    novelty.reduce((sum, v) => sum + v, 0) / Math.max(1, novelty.length)
-  const deviation = Math.sqrt(
-    novelty.reduce((sum, v) => sum + (v - mean) ** 2, 0) /
-      Math.max(1, novelty.length)
-  )
-  const sections = novelty
-    .map((value, index) => ({ value, index }))
-    .filter(
-      ({ value, index }) =>
-        value > mean + deviation &&
-        value >= (novelty[index - 1] ?? 0) &&
-        value >= (novelty[index + 1] ?? 0)
-    )
-    // Arrangement changes land on 4-bar lines relative to the phrase grid.
+  const sections = peaks
+    // Changes a bar off a 4-bar line snap to it; others stay where they are.
     .map(({ index }) => {
-      const phraseBars = Math.round((index - shift) / 4) * 4 + shift
-      return Math.round((beatOffset + phraseBars * bar) * 100) / 100
+      const line = Math.round((index - shift) / 4) * 4 + shift
+      const at = Math.abs(line - index) <= 1 ? line : index
+      return Math.round((beatOffset + at * bar) * 100) / 100
     })
     .filter(
       (time, i, all) => time >= 0 && time < duration && all.indexOf(time) === i

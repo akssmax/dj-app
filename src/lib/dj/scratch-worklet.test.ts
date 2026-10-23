@@ -140,3 +140,52 @@ describe("scratch motion bounds", () => {
     expect(Math.max(...output[0].map(Math.abs))).toBeLessThan(0.001)
   })
 })
+
+describe("scratch tape hand-off and windows", () => {
+  it("brakes a moving record under the hand instead of cutting it", () => {
+    const rate = 1000,
+      tape = new ScratchTape(rate)
+    tape.setBuffer(
+      [Float32Array.from({ length: rate * 2 }, (_, i) => 0.2 + i / rate / 4)],
+      rate
+    )
+    tape.hold(0.5, 1, 0)
+    const output = [new Float32Array(5)]
+    tape.render(output, 0)
+    // Sound continues straight away, at the record's position.
+    expect(output[0][4]).toBeGreaterThan(0.1)
+    for (let frame = 0; frame < 80; frame++)
+      tape.render([new Float32Array(1)], (5 + frame) / rate)
+    // Then the record stops about 25 ms further on, without running away.
+    expect(tape.seconds).toBeGreaterThan(0.505)
+    expect(tape.seconds).toBeLessThanOrEqual(0.5251)
+  })
+  it("reads a window in track seconds and slides it without a jump", () => {
+    const rate = 1000,
+      track = Float32Array.from({ length: rate * 10 }, (_, i) => i / rate / 10)
+    const tape = new ScratchTape(rate)
+    tape.setBuffer([track.slice(2000, 6000)], rate, 2)
+    let time = 0,
+      target = 3
+    tape.move(target, 0.01, time)
+    const before: number[] = []
+    for (let packet = 0; packet < 20; packet++) {
+      target += 0.016
+      tape.move(target, 0.016, time)
+      tape.render([new Float32Array(16)], time)
+      before.push(tape.seconds)
+      time += 0.016
+    }
+    // Reads match the track at the same absolute time.
+    expect(tape.seconds).toBeGreaterThan(3.2)
+    expect(tape.seconds).toBeLessThan(target + 0.001)
+    const at = tape.seconds
+    tape.setBuffer([track.slice(3000, 7000)], rate, 3)
+    expect(tape.seconds).toBeCloseTo(at, 6)
+    const output = [new Float32Array(16)]
+    target += 0.016
+    tape.move(target, 0.016, time)
+    tape.render(output, time)
+    expect(Math.abs(output[0][15] - tape.seconds / 10)).toBeLessThan(0.01)
+  })
+})

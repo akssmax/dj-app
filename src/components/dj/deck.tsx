@@ -26,6 +26,8 @@ import {
   MixerOptions,
 } from "./controller-controls"
 import { PerformancePads } from "./performance-pads"
+import { DeckStems } from "./stem-controls"
+import { AnalysisFixes } from "./analysis-fixes"
 import { transitionAnnotations } from "@/lib/dj/cue-suggestions"
 import { TRACK_DRAG_TYPE } from "@/lib/dj/mix-fit"
 
@@ -194,6 +196,7 @@ export function Deck({
                 ? "Re-analyze"
                 : "Analyze"}
         </Button>
+        <AnalysisFixes id={id} />
         <Badge
           variant="outline"
           className={`deck-status ${deck.playing ? "is-playing" : ""}`}
@@ -240,6 +243,7 @@ export function Deck({
           </TooltipContent>
         </Tooltip>
       </div>
+      <DeckStems id={id} />
       <div className="deck-screen">
         <div className="deck-metrics">
           <div>
@@ -252,7 +256,9 @@ export function Deck({
             </strong>
           </div>
           <div>
-            <span className="metric-caption">KEY · EST.</span>
+            <span className="metric-caption">
+              {track?.keyOverride ? "KEY · YOURS" : "KEY · EST."}
+            </span>
             <strong className="key-value">
               {track?.camelot ?? "—"}
               <small>{track?.key ?? "Analyzing"}</small>

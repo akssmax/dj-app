@@ -1,7 +1,16 @@
 import { beatOffset } from "../beatgrid"
 import { deckMixGain } from "../engine"
 import { sectionAt } from "../sections"
-import { idlePalette, linearPalette, paletteForCamelot } from "./palettes"
+import {
+  blendPalettes,
+  idlePalette,
+  linearPalette,
+  paletteForCamelot,
+  palettes,
+  rotateHue,
+  themePalette,
+} from "./palettes"
+import type { ColorMode, ThemeColors } from "./palettes"
 import type { DJEngine } from "../engine"
 import type { SectionLabel } from "../sections"
 import type { DeckId } from "../types"
@@ -93,7 +102,16 @@ export class VisualDriver {
   private lastPhrase = -1
   private lastSection: SectionLabel | null = null
   private target = new Float32Array(12)
-  private scratch = new Float32Array(12)
+  private deckColors = { A: new Float32Array(12), B: new Float32Array(12) }
+  /** Spectrum mode: each new track takes the next slot; phrases and drops shift all. */
+  private slots: Partial<Record<DeckId, { track: string; slot: number }>> = {}
+  private nextSlot = 0
+  private shift = 0
+  private idleTimer = 0
+  private time = 0
+  private snap = 0
+  colorMode: ColorMode = "spectrum"
+  themeColors: ThemeColors | null = null
   readonly frame: VisualFrame = {
     bass: 0,
     mid: 0,
@@ -187,22 +205,66 @@ export class VisualDriver {
     frame.flash = Math.max(0, frame.flash - dt * 2.2)
     frame.travel += dt * (0.25 + 1.4 * frame.bass + 0.4 * frame.pulse)
 
-    // Palette: blend the audible decks' key palettes, then ease towards it.
-    this.target.fill(0)
-    let total = 0
-    for (const id of decks) {
-      const gain = Math.max(weight(id), 0.001),
-        colors = linearPalette(
-          paletteForCamelot(state[id].track?.camelot),
-          this.scratch
-        )
-      for (let i = 0; i < 12; i++) this.target[i] += colors[i] * gain
-      total += gain
-    }
-    if (total) for (let i = 0; i < 12; i++) this.target[i] /= total
-    else linearPalette(idlePalette, this.target)
-    for (let i = 0; i < 12; i++)
-      frame.palette[i] = follow(frame.palette[i], this.target[i], 1.2, dt)
+    this.updatePalette(dt, decks, weight, events, !!lead)
     return events
+  }
+
+  private updatePalette(
+    dt: number,
+    decks: DeckId[],
+    weight: (id: DeckId) => number,
+    events: VisualEvents,
+    playing: boolean
+  ) {
+    const state = this.engine.getSnapshot(),
+      frame = this.frame
+    this.time += dt
+    // Spectrum steps one palette per 16-bar phrase and jumps on drops; while
+    // idle it still moves every 20 s.
+    if (events.drop) {
+      this.shift += 2
+      this.snap = 0.6
+    } else if (events.phrase) this.shift += 1
+    this.idleTimer = playing ? 0 : this.idleTimer + dt
+    if (this.idleTimer > 20) {
+      this.idleTimer = 0
+      this.shift += 1
+    }
+    const mode = this.colorMode
+    if (mode === "theme" && this.themeColors) {
+      const a = decks.includes("A") ? weight("A") : 0,
+        b = decks.includes("B") ? weight("B") : 0
+      themePalette(this.themeColors, a + b > 0 ? b / (a + b) : 0, this.target)
+    } else {
+      const spectrum = mode !== "key"
+      const paletteFor = (id: DeckId) => {
+        if (!spectrum)
+          return paletteForCamelot(state[id].track?.camelot ?? null)
+        const track = state[id].track?.id ?? ""
+        if (this.slots[id]?.track !== track)
+          this.slots[id] = { track, slot: this.nextSlot++ }
+        // Slots sit 5 palettes apart so consecutive tracks contrast.
+        return (this.slots[id].slot * 5 + this.shift) % palettes.length
+      }
+      if (decks.length)
+        blendPalettes(
+          decks.map((id) => ({
+            colors: linearPalette(paletteFor(id), this.deckColors[id]),
+            gain: weight(id),
+          })),
+          this.target
+        )
+      else
+        linearPalette(
+          spectrum ? this.shift % palettes.length : idlePalette,
+          this.target
+        )
+      if (spectrum)
+        rotateHue(this.target, 0.5 * Math.sin((this.time * 2 * Math.PI) / 30))
+    }
+    const rate = this.snap > 0 ? 6 : 1.2
+    this.snap = Math.max(0, this.snap - dt)
+    for (let i = 0; i < 12; i++)
+      frame.palette[i] = follow(frame.palette[i], this.target[i], rate, dt)
   }
 }
