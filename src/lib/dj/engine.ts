@@ -2654,7 +2654,7 @@ export class DJEngine {
             ? saved.trim
             : id === auto.out
               ? saved.trim
-              : auto.levels.inTrim,
+              : auto.levels.settledInTrim,
           rate: cancelled ? saved.rate : deck.rate,
         })
       }
@@ -2673,6 +2673,14 @@ export class DJEngine {
         )
       }
       this.applyChannel(id)
+      // Give back the overlap headroom slowly so the level doesn't jump.
+      if (!cancelled && id === auto.incoming && this.context) {
+        const now = this.context.currentTime,
+          param = ch.trim.gain
+        param.cancelScheduledValues(now)
+        // Settles over about four seconds.
+        param.setTargetAtTime(10 ** (deck.trim / 20), now, 1.3)
+      }
     }
     if (auto.plan.execution === "loop") {
       const ch = this.channels[auto.out]!,

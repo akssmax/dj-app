@@ -177,6 +177,28 @@ describe("measured section levels and headroom", () => {
       expect(Number.isFinite(levels.inTrim)).toBe(true)
     }
   })
+  it("does not let trims ratchet lower from mix to mix", () => {
+    // The outgoing deck was already pulled to -11 dB; the next track at the
+    // same loudness settles near unity instead of following it down.
+    const levels = matchLoudness(
+      pcm(0.1),
+      pcm(0.1),
+      plan,
+      { out: { ...saved, trim: -11 }, incoming: saved },
+      0.8
+    )
+    expect(levels.settledInTrim).toBeCloseTo(-3, 3)
+    // Loud masters get overlap headroom, released after the mix.
+    const loud = matchLoudness(
+      pcm(0.99),
+      pcm(0.99),
+      plan,
+      { out: saved, incoming: saved },
+      1
+    )
+    expect(loud.inTrim).toBeLessThan(loud.settledInTrim)
+    expect(loud.settledInTrim).toBeCloseTo(0, 3)
+  })
   it("keeps conservative summed peaks below -3dB including extreme positive EQ", () => {
     for (const recipe of [
       plan,

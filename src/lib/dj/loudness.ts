@@ -117,10 +117,16 @@ export function matchLoudness(
   let inTrim = original.incoming.trim
   let limited = false
   if (a.usable && b.usable) {
-    const desiredTrim = outTrim + 20 * Math.log10(a.rms / b.rms)
-    inTrim = Math.max(-24, Math.min(6, desiredTrim))
+    // Match against the outgoing track near its natural level: a trim that
+    // was already pulled down must not drag every following track lower.
+    const reference = Math.max(-3, Math.min(3, outTrim))
+    const desiredTrim = reference + 20 * Math.log10(a.rms / b.rms)
+    inTrim = Math.max(-12, Math.min(6, desiredTrim))
     limited = Math.abs(inTrim - desiredTrim) > 0.1
   }
+  // The incoming track's trim once the outgoing deck is gone. Headroom below
+  // only protects the overlap and is released after the mix.
+  const settledInTrim = inTrim
   // Bound the sum of both full-track sample peaks across the actual recipe.
   // Positive EQ is conservatively included; FX exits reserve additional space.
   const eqGain = (channel: AutomationChannel) =>
@@ -165,6 +171,7 @@ export function matchLoudness(
     inVolume: outVolume * faderScale,
     outTrim,
     inTrim,
+    settledInTrim,
     matched: a.usable && b.usable && !limited,
     limited,
     headroomDb: -reduction,
