@@ -1896,3 +1896,36 @@
     backdrop-filter: none;
   }
 }
+
+/* Public visitor counter */
+.visitor-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  animation: visitor-in 0.4s ease both;
+}
+.visitor-count i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--play);
+  box-shadow: 0 0 8px var(--play);
+}
+.hero-visitors {
+  margin-top: -4px;
+}
+@keyframes visitor-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .visitor-count {
+    animation: none;
+  }
+}

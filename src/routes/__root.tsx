@@ -6,6 +6,8 @@ import {
 } from "@tanstack/react-router"
 import { DJProvider } from "@/components/dj/provider"
 import { AppShell } from "@/components/dj/shell"
+import { useEffect } from "react"
+import { loadVisitorCount } from "@/lib/visitors"
 
 import appCss from "../styles.css?url"
 import themeCss from "../themes.css?url"
@@ -60,6 +62,10 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   const marketing = useRouterState({
     select: (state) => marketingRoutes.has(state.location.pathname),
   })
+  // Count the visit on whichever page someone lands, studio included.
+  useEffect(() => {
+    void loadVisitorCount()
+  }, [])
   return (
     <html lang="en" className="dark" data-theme="studio">
       <head>

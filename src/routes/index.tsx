@@ -1,6 +1,6 @@
 import { Link, createFileRoute } from "@tanstack/react-router"
 import { useState } from "react"
-import { SiteLayout } from "@/components/marketing/site"
+import { SiteLayout, VisitorCount } from "@/components/marketing/site"
 import { AsciiBackdrop } from "@/components/marketing/ascii-backdrop"
 import { CompareTable } from "@/components/marketing/compare"
 import { AutomixSection } from "@/components/marketing/sections/automix"
@@ -134,6 +134,7 @@ function HomePage() {
               />
             ))}
           </div>
+          <VisitorCount className="hero-visitors" />
         </div>
         <div className="site-wrap">
           <figure className="hero-stage">

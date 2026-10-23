@@ -3,9 +3,24 @@ import type { CSSProperties, ReactNode } from "react"
 import { CueWordmark } from "@/components/brand/mark"
 import { APP_RELEASE, APP_VERSION } from "@/lib/version"
 import { AsciiBackdrop } from "./ascii-backdrop"
+import { useVisitorCount } from "@/lib/visitors"
+import { cn } from "@/lib/utils"
 
 // Midnight Violet's deck colors: the default palette for the public pages.
 export const DEFAULT_PALETTE = ["#b7a4ff", "#ff8fc2"] as const
+
+/** Public visitor total; renders nothing until it loads or if it fails. */
+export function VisitorCount({ className }: { className?: string }) {
+  const count = useVisitorCount()
+  if (count === null) return null
+  return (
+    <span className={cn("visitor-count", className)}>
+      <i aria-hidden="true" />
+      {count.toLocaleString("en-US")} {count === 1 ? "visitor" : "visitors"} so
+      far
+    </span>
+  )
+}
 
 export function ReleaseChip() {
   return (
@@ -154,6 +169,7 @@ function SiteFooter({ palette }: { palette: readonly [string, string] }) {
         <span className="footer-version">
           {APP_RELEASE} · {APP_VERSION}
         </span>
+        <VisitorCount />
         <span className="footer-legal">
           rekordbox, Serato, Traktor, djay and Beatport are trademarks of their
           owners. Cue is not affiliated with them.
