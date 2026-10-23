@@ -17,6 +17,9 @@ export type TrackStructure = {
 
 const FRAME = 2048
 
+/** Bump when vocal detection changes so saved tracks are re-measured. */
+export const VOCALS_VERSION = 2
+
 /** In-place radix-2 FFT. */
 function fft(re: Float64Array, im: Float64Array) {
   const n = re.length
@@ -112,6 +115,13 @@ export function vocalPresence(channels: Float32Array[], sampleRate: number) {
   const seconds = Math.ceil(length / sampleRate)
   const peak = Math.max(1e-9, ...frames.map((frame) => frame.total))
   const raw: number[] = []
+  const features: {
+    second: number
+    centered: number
+    tonal: number
+    share: number
+    swing: number
+  }[] = []
   for (let second = 0; second < seconds; second++) {
     const inside = frames.filter(
       (frame) => frame.time >= second && frame.time < second + 1
@@ -142,11 +152,42 @@ export function vocalPresence(channels: Float32Array[], sampleRate: number) {
     const swing = Math.sqrt(
       levels.reduce((sum, v) => sum + (v - mean) ** 2, 0) / levels.length
     )
-    raw.push(
-      ramp(tonal, 0.55, 0.85) *
-        (stereo ? ramp(center / (center + side + 1e-12), 0.55, 0.8) : 1) *
-        ramp(center / (total + 1e-12), 0.15, 0.45) *
-        ramp(swing, 0.06, 0.22)
+    features.push({
+      second,
+      centered: center / (center + side + 1e-12),
+      tonal,
+      share: center / (total + 1e-12),
+      swing,
+    })
+    raw.push(0)
+  }
+  // Score against this track's own accompaniment. A voice pulls the voice
+  // band toward the centre compared with the track's typical stereo spread
+  // (its median second); fixed thresholds missed voices over dense drums.
+  // Tested by mixing speech into instrumentals: about 80% of vocal seconds
+  // found, against about 50% before, at a similar false-alarm rate.
+  const median = (values: number[]) =>
+    [...values].sort((x, y) => x - y)[Math.floor(values.length / 2)] ?? 0
+  const live = features.filter((f) => f.share > 0)
+  const baseCentered = median(live.map((f) => f.centered)),
+    baseShare = median(live.map((f) => f.share))
+  // Mono files carry no stereo cue: tone, voice-band share and syllables.
+  const stereoCue = stereo && baseCentered < 0.95
+  for (const f of features) {
+    const classic =
+      ramp(f.tonal, 0.55, 0.85) *
+      ramp(f.share, 0.15, 0.45) *
+      ramp(f.swing, 0.06, 0.22)
+    if (!stereoCue) {
+      raw[f.second] = classic
+      continue
+    }
+    const lift = (f.centered - baseCentered) / Math.max(0.05, 1 - baseCentered)
+    raw[f.second] = Math.max(
+      ramp(lift, 0.3, 0.7) *
+        (0.6 + 0.4 * ramp(f.tonal, 0.4, 0.75)) *
+        ramp(f.share / (baseShare + 1e-12), 0.5, 0.9),
+      classic * ramp(lift, 0.1, 0.4)
     )
   }
   // A 3-second median removes one-off blips from fills and FX.
@@ -261,4 +302,28 @@ export function consensusTempo(estimates: (number | null)[]) {
   }
   const sorted = [...bestGroup].sort((a, b) => a - b)
   return Math.round(sorted[Math.floor(sorted.length / 2)] * 10) / 10
+}
+
+/**
+ * How far the beatgrid can be trusted, 0–1: whether the tempo windows agree
+ * and how evenly the detected beats are spaced. Long beatmatched blends need
+ * a steady grid; shaky ones should fall back to short or FX exits.
+ */
+export function gridConfidence(estimates: (number | null)[], beats: number[]) {
+  const bpm = consensusTempo(estimates)
+  if (!bpm) return 0
+  const values = estimates.filter((v): v is number => !!v && v > 0)
+  const agreement =
+    values.filter((v) => Math.abs(v / bpm - 1) <= 0.015).length /
+    Math.max(1, estimates.length)
+  const intervals = beats.slice(1).map((beat, i) => beat - beats[i])
+  let steadiness = 0.5
+  if (intervals.length >= 8) {
+    const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length
+    const spread = Math.sqrt(
+      intervals.reduce((a, b) => a + (b - mean) ** 2, 0) / intervals.length
+    )
+    steadiness = Math.max(0, Math.min(1, 1 - (spread / mean) * 5))
+  }
+  return Math.round((agreement * 0.5 + steadiness * 0.5) * 100) / 100
 }

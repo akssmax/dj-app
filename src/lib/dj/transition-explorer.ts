@@ -1,8 +1,9 @@
+import type { FXAmount } from "./auto-fx"
 import { beatOffset } from "./beatgrid"
 import { cueOptions } from "./cue-suggestions"
 import type { CueOption } from "./cue-suggestions"
-import { planTransitions, sectionEnergy } from "./planner"
-import type { MixIntent, Track, Transition } from "./types"
+import { arrangementRoutines, planTransitions, sectionEnergy } from "./planner"
+import type { MixIntent, MixPace, Track, Transition } from "./types"
 
 export type CuePair = {
   id: string
@@ -33,6 +34,9 @@ export type ExplorerOptions = {
   inLabels?: (string | null)[]
   outCue?: number | null
   inCue?: number | null
+  pace?: MixPace
+  /** Auto-FX amount and recent effects, for the plans pairs turn into. */
+  fx?: { amount: FXAmount; recent: string[] }
 }
 
 function anchors(
@@ -87,142 +91,151 @@ export function discoverTransitions(
     options.inCue,
     templates[0]?.inStart ?? 0
   )
-  return templates
-    .flatMap((template): TransitionChoice[] => {
-      const pairs: CuePair[] = []
-      const exitEnergy = new Map(
-        exits.map((cue) => [
-          cue.position,
-          sectionEnergy(
-            out,
+  return (
+    templates
+      // Drop and breakdown routines have fixed points; cue pairs can't move them.
+      .filter((template) => !arrangementRoutines.includes(template.id))
+      .flatMap((template): TransitionChoice[] => {
+        const pairs: CuePair[] = []
+        const exitEnergy = new Map(
+          exits.map((cue) => [
             cue.position,
-            Math.min(32 * beat, template.duration)
-          ),
-        ])
-      )
-      const entryEnergy = new Map(
-        entries.map((cue) => [
-          cue.position,
-          sectionEnergy(
-            incoming,
+            sectionEnergy(
+              out,
+              cue.position,
+              Math.min(32 * beat, template.duration)
+            ),
+          ])
+        )
+        const entryEnergy = new Map(
+          entries.map((cue) => [
             cue.position,
-            Math.min(32 * beat, template.duration) * template.rate
-          ),
-        ])
-      )
-      for (const exit of exits)
-        for (const entry of entries) {
-          let duration = Math.min(
-            template.duration,
-            out.duration - exit.position - 0.02,
-            (incoming.duration - entry.position - 0.02) / template.rate
-          )
-          if (template.beatmatch)
-            duration = Math.floor(duration / (8 * beat)) * 8 * beat
-          if (duration <= 0.02 || (template.beatmatch && duration < 8 * beat))
-            continue
-          const difference =
-            out.bpm && incoming.bpm
-              ? ((entry.position - beatOffset(incoming)) * incoming.bpm) / 60 -
-                ((exit.position - beatOffset(out)) * out.bpm) / 60
-              : null
-          const phaseError =
-            difference === null
-              ? null
-              : Math.abs(difference - Math.round(difference / 4) * 4)
-          const quietOut = exitEnergy.get(exit.position),
-            quietIn = entryEnergy.get(entry.position)
-          const shortened = duration < template.duration - 0.001
-          const energyGoal =
-            options.intent === "lift"
-              ? 0.2
-              : options.intent === "ease"
-                ? -0.2
-                : 0
-          const localFit =
-            quietOut != null && quietIn != null
-              ? Math.max(0, 1 - Math.abs(quietIn - quietOut - energyGoal))
-              : 0.5
-          const score = Math.round(
-            Math.max(
-              1,
-              Math.min(
-                99,
-                template.score * 0.6 +
-                  (template.beatmatch
-                    ? phaseError !== null && phaseError < 0.05
-                      ? 10
-                      : -12
-                    : 5) +
-                  localFit * 8 +
-                  (quietOut == null
-                    ? 0
-                    : (1 - quietOut) *
-                      (template.execution === "reverb" ? 10 : 4)) +
-                  (quietIn == null
-                    ? 0
-                    : (1 - quietIn) * (template.beatmatch ? 5 : 1)) +
-                  (exit.position / out.duration) * 14 +
-                  (1 - entry.position / incoming.duration) * 3 +
-                  (exit.source === "saved" && exit.position > beat * 4
-                    ? 3
-                    : 0) +
-                  (entry.source === "saved" ? 3 : 0) -
-                  (shortened ? 14 * (1 - duration / template.duration) : 0)
+            sectionEnergy(
+              incoming,
+              cue.position,
+              Math.min(32 * beat, template.duration) * template.rate
+            ),
+          ])
+        )
+        for (const exit of exits)
+          for (const entry of entries) {
+            let duration = Math.min(
+              template.duration,
+              out.duration - exit.position - 0.02,
+              (incoming.duration - entry.position - 0.02) / template.rate
+            )
+            if (template.beatmatch)
+              duration = Math.floor(duration / (8 * beat)) * 8 * beat
+            if (duration <= 0.02 || (template.beatmatch && duration < 8 * beat))
+              continue
+            const difference =
+              out.bpm && incoming.bpm
+                ? ((entry.position - beatOffset(incoming)) * incoming.bpm) /
+                    60 -
+                  ((exit.position - beatOffset(out)) * out.bpm) / 60
+                : null
+            const phaseError =
+              difference === null
+                ? null
+                : Math.abs(difference - Math.round(difference / 4) * 4)
+            const quietOut = exitEnergy.get(exit.position),
+              quietIn = entryEnergy.get(entry.position)
+            const shortened = duration < template.duration - 0.001
+            const energyGoal =
+              options.intent === "lift"
+                ? 0.2
+                : options.intent === "ease"
+                  ? -0.2
+                  : 0
+            const localFit =
+              quietOut != null && quietIn != null
+                ? Math.max(0, 1 - Math.abs(quietIn - quietOut - energyGoal))
+                : 0.5
+            const score = Math.round(
+              Math.max(
+                1,
+                Math.min(
+                  99,
+                  template.score * 0.6 +
+                    (template.beatmatch
+                      ? phaseError !== null && phaseError < 0.05
+                        ? 10
+                        : -12
+                      : 5) +
+                    localFit * 8 +
+                    (quietOut == null
+                      ? 0
+                      : (1 - quietOut) *
+                        (template.execution === "reverb" ? 10 : 4)) +
+                    (quietIn == null
+                      ? 0
+                      : (1 - quietIn) * (template.beatmatch ? 5 : 1)) +
+                    (exit.position / out.duration) * 14 +
+                    (1 - entry.position / incoming.duration) * 3 +
+                    (exit.source === "saved" && exit.position > beat * 4
+                      ? 3
+                      : 0) +
+                    (entry.source === "saved" ? 3 : 0) -
+                    (shortened ? 14 * (1 - duration / template.duration) : 0)
+                )
               )
             )
-          )
-          pairs.push({
-            id: `${template.id}:${exit.position}:${entry.position}`,
-            technique: template.id,
-            out: exit,
-            incoming: entry,
-            score,
-            bars: template.bars
-              ? Math.round((duration / (beat * 4)) * 10) / 10
-              : 0,
-            duration: duration / outRate,
-            phaseError,
-            shortened,
-            reasons: [
-              template.beatmatch
-                ? phaseError !== null && phaseError < 0.05
-                  ? "Bar downbeats align on the estimated grids"
-                  : "Cue phases differ; audition or adjust the grid"
-                : "Brief overlap keeps native tempos",
-              ...(quietOut != null && quietOut < 0.55
-                ? ["Quieter outgoing window in measured loudness"]
-                : []),
-              ...(quietIn != null && quietIn < 0.55
-                ? ["Quieter incoming window leaves room for the blend"]
-                : []),
-              ...(exit.source === "saved" || entry.source === "saved"
-                ? ["Includes a saved cue"]
-                : []),
-              ...(shortened ? ["Less space available: shortened routine"] : []),
-            ],
-          })
-        }
-      pairs.sort(
-        (a, b) =>
-          b.score - a.score ||
-          b.out.position - a.out.position ||
-          a.incoming.position - b.incoming.position
-      )
-      const validExits = new Set(pairs.map((pair) => pair.out.position))
-      const validEntries = new Set(pairs.map((pair) => pair.incoming.position))
-      return pairs.length
-        ? [
-            {
-              plan: template,
-              pairs,
-              exits: exits.filter((p) => validExits.has(p.position)),
-              entries: entries.filter((p) => validEntries.has(p.position)),
-            },
-          ]
-        : []
-    })
-    .sort((a, b) => b.pairs[0].score - a.pairs[0].score)
+            pairs.push({
+              id: `${template.id}:${exit.position}:${entry.position}`,
+              technique: template.id,
+              out: exit,
+              incoming: entry,
+              score,
+              bars: template.bars
+                ? Math.round((duration / (beat * 4)) * 10) / 10
+                : 0,
+              duration: duration / outRate,
+              phaseError,
+              shortened,
+              reasons: [
+                template.beatmatch
+                  ? phaseError !== null && phaseError < 0.05
+                    ? "Bar downbeats align on the estimated grids"
+                    : "Cue phases differ; audition or adjust the grid"
+                  : "Brief overlap keeps native tempos",
+                ...(quietOut != null && quietOut < 0.55
+                  ? ["Quieter outgoing window in measured loudness"]
+                  : []),
+                ...(quietIn != null && quietIn < 0.55
+                  ? ["Quieter incoming window leaves room for the blend"]
+                  : []),
+                ...(exit.source === "saved" || entry.source === "saved"
+                  ? ["Includes a saved cue"]
+                  : []),
+                ...(shortened
+                  ? ["Less space available: shortened routine"]
+                  : []),
+              ],
+            })
+          }
+        pairs.sort(
+          (a, b) =>
+            b.score - a.score ||
+            b.out.position - a.out.position ||
+            a.incoming.position - b.incoming.position
+        )
+        const validExits = new Set(pairs.map((pair) => pair.out.position))
+        const validEntries = new Set(
+          pairs.map((pair) => pair.incoming.position)
+        )
+        return pairs.length
+          ? [
+              {
+                plan: template,
+                pairs,
+                exits: exits.filter((p) => validExits.has(p.position)),
+                entries: entries.filter((p) => validEntries.has(p.position)),
+              },
+            ]
+          : []
+      })
+      .sort((a, b) => b.pairs[0].score - a.pairs[0].score)
+  )
 }
 
 export function cuePairPlan(

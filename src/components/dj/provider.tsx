@@ -37,7 +37,13 @@ import { MidiActivity } from "@/lib/dj/midi-activity"
 import { MidiSession } from "@/lib/dj/midi-session"
 import { AutomixSession, emptyAutomix } from "@/lib/dj/automix-session"
 import { selectSnapshot } from "@/lib/dj/selection"
-import { planTransitions } from "@/lib/dj/planner"
+import {
+  deckKey,
+  findPlan,
+  pairKey,
+  planTransitions,
+  ratingKey,
+} from "@/lib/dj/planner"
 import {
   scopedTracks,
   scopeName,
@@ -88,6 +94,8 @@ export function DJProvider({ children }: { children: ReactNode }) {
   }
   const [coachOpen, setCoachOpen] = useState(true),
     [report, setReport] = useState<ManualReport | null>(null)
+  const [lastTransition, setLastTransition] =
+    useState<DJContextValue["lastTransition"]>(null)
   const [coachDetailsOpen, setCoachDetailsOpen] = useState(false)
   const [coachDetailsTab, setCoachDetailsTab] = useState<"explore" | "why">(
     "explore"
@@ -328,14 +336,17 @@ export function DJProvider({ children }: { children: ReactNode }) {
           quantize: { ...db.session.quantize, [id]: enabled },
         },
       }))
-    dj.onTransition = (id) =>
+    dj.onTransition = (id, fx, pair) => {
+      setLastTransition({ ...pair, technique: id, rating: 0, saved: false })
       update((db) => ({
         ...db,
         session: {
           ...db.session,
           recentTransitions: [...db.session.recentTransitions, id].slice(-6),
+          recentFX: [...db.session.recentFX, fx].slice(-6),
         },
       }))
+    }
     const mix = new AutomixSession(
       dj,
       () => ({
@@ -343,6 +354,8 @@ export function DJProvider({ children }: { children: ReactNode }) {
         session: dataRef.current.session,
         cues: dataRef.current.cues,
         labels: dataRef.current.cueLabels,
+        saved: dataRef.current.savedTransitions,
+        ratings: dataRef.current.transitionRatings,
       }),
       loadTrack,
       setAutomix,
@@ -995,7 +1008,7 @@ export function DJProvider({ children }: { children: ReactNode }) {
       const inputs = planningInputs(engine.state)
       if (inputs !== previous) {
         previous = inputs
-        const plans = planTransitions(out.track, incoming.track, 0, {
+        const plans = planTransitions(out.track, incoming.track, out.position, {
           outRate: effectiveDeckRate(out),
           incomingRate: effectiveDeckRate(incoming),
           intent: inputs.intent,
@@ -1003,8 +1016,10 @@ export function DJProvider({ children }: { children: ReactNode }) {
           recent: inputs.recent,
           outCue: inputs.cues[out.track.id]?.exit,
           inCue: inputs.cues[incoming.track.id]?.entry,
+          outKey: deckKey(out),
+          inKey: deckKey(incoming),
         })
-        plan = plans.find((p) => p.id === inputs.technique) ?? plans.at(0)
+        plan = findPlan(plans, inputs.technique) ?? plans.at(0)
       }
       const zone = `${out.track.id}:${incoming.track.id}`
       if (!plan) return
@@ -1057,6 +1072,43 @@ export function DJProvider({ children }: { children: ReactNode }) {
     },
     stopAutomix: () => automixRef.current?.stop(),
     resetAutomixHistory: () => automixRef.current?.resetHistory(),
+    pinAutomix: (trackId) => automixRef.current?.pin(trackId),
+    lastTransition,
+    rateTransition: (vote) => {
+      const last = lastTransition
+      if (!last || last.rating === vote) return
+      const key = ratingKey(last.genre, last.technique)
+      // Changing your mind replaces the earlier vote.
+      const change = vote - last.rating
+      setLastTransition({ ...last, rating: vote })
+      update((db) => ({
+        ...db,
+        transitionRatings: {
+          ...db.transitionRatings,
+          [key]: Math.max(
+            -5,
+            Math.min(5, (db.transitionRatings[key] ?? 0) + change)
+          ),
+        },
+      }))
+    },
+    saveTransition: () => {
+      const last = lastTransition
+      if (!last || last.saved || !last.out || !last.incoming) return
+      setLastTransition({ ...last, saved: true })
+      update((db) => ({
+        ...db,
+        savedTransitions: {
+          ...db.savedTransitions,
+          [pairKey(last.out, last.incoming)]: {
+            technique: last.technique,
+            savedAt: new Date().toISOString(),
+          },
+        },
+      }))
+      notify(`Saved ${last.name} for this pair.`)
+    },
+    skipAutomix: (trackId) => automixRef.current?.skip(trackId),
     database,
     tracks,
     ready,
@@ -1180,12 +1232,42 @@ export function DJProvider({ children }: { children: ReactNode }) {
     layout: database.session.layout,
     setLayout: (layout) =>
       update((db) => ({ ...db, session: { ...db.session, layout } })),
+    // A chosen energy goal or pace steers by hand until "Follow the set"
+    // is picked again.
     setMixIntent: (mixIntent) => {
-      update((db) => ({ ...db, session: { ...db.session, mixIntent } }))
+      update((db) => ({
+        ...db,
+        session: {
+          ...db.session,
+          mixIntent,
+          setPlan: { ...db.session.setPlan, follow: false },
+        },
+      }))
       automixRef.current?.refresh()
     },
     setMixPace: (mixPace) => {
-      update((db) => ({ ...db, session: { ...db.session, mixPace } }))
+      update((db) => ({
+        ...db,
+        session: {
+          ...db.session,
+          mixPace,
+          setPlan: { ...db.session.setPlan, follow: false },
+        },
+      }))
+      automixRef.current?.refresh()
+    },
+    setSetPlan: (change) => {
+      update((db) => ({
+        ...db,
+        session: {
+          ...db.session,
+          setPlan: { ...db.session.setPlan, ...change },
+        },
+      }))
+      automixRef.current?.refresh()
+    },
+    setFXAmount: (fxAmount) => {
+      update((db) => ({ ...db, session: { ...db.session, fxAmount } }))
       automixRef.current?.refresh()
     },
     setTransitionCue: (trackId, role, position) => {
@@ -1279,6 +1361,8 @@ const fallbackEngine: EngineState = {
   autoStatus: "Ready when you are",
   recording: false,
   lastRecording: null,
+  lastTracklist: null,
+  previewing: false,
   error: null,
   controller: emptyController(),
 }
@@ -1325,6 +1409,8 @@ export function useTransitionPlan({
       aPosition: at(current.A.position),
       aRate: planningRate(current.A),
       aLow: current.A.low,
+      aKeyShift: current.A.keyShift,
+      aKeyLock: current.A.keyLock,
       bTrack: current.B.track,
       bCues: current.B.cues,
       bCueLabels: current.B.cueLabels,
@@ -1333,6 +1419,8 @@ export function useTransitionPlan({
       bPosition: at(current.B.position),
       bRate: planningRate(current.B),
       bLow: current.B.low,
+      bKeyShift: current.B.keyShift,
+      bKeyLock: current.B.keyLock,
     })),
     { database } = useDJ()
   const outId = state.outId,
@@ -1346,6 +1434,7 @@ export function useTransitionPlan({
     position: state.aPosition,
     rate: state.aRate,
     low: state.aLow,
+    key: { shift: state.aKeyShift, lock: state.aKeyLock },
   }
   const b = {
     track: state.bTrack,
@@ -1356,6 +1445,7 @@ export function useTransitionPlan({
     position: state.bPosition,
     rate: state.bRate,
     low: state.bLow,
+    key: { shift: state.bKeyShift, lock: state.bKeyLock },
   }
   const out = outId === "A" ? a : b,
     incoming = inId === "A" ? a : b
@@ -1365,6 +1455,8 @@ export function useTransitionPlan({
     transitionTechnique,
     recentTransitions,
     transitionCues,
+    fxAmount,
+    recentFX,
   } = database.session
   const outCue = out.track ? (transitionCues[out.track.id]?.exit ?? null) : null
   const inCue = incoming.track
@@ -1382,6 +1474,16 @@ export function useTransitionPlan({
             recent: recentTransitions,
             outCue,
             inCue,
+            outKey: out.key,
+            inKey: incoming.key,
+            fx: { amount: fxAmount, recent: recentFX },
+            taste: {
+              saved:
+                database.savedTransitions[
+                  pairKey(out.track.id, incoming.track.id)
+                ]?.technique,
+              ratings: database.transitionRatings,
+            },
           })
         : [],
     [
@@ -1389,6 +1491,14 @@ export function useTransitionPlan({
       incoming.track,
       out.rate,
       incoming.rate,
+      out.key.shift,
+      out.key.lock,
+      incoming.key.shift,
+      incoming.key.lock,
+      fxAmount,
+      recentFX,
+      database.savedTransitions,
+      database.transitionRatings,
       mixIntent,
       mixPace,
       recentTransitions,
@@ -1397,8 +1507,6 @@ export function useTransitionPlan({
     ]
   )
   const plan =
-    state.autoPlan ??
-    plans.find((p) => p.id === transitionTechnique) ??
-    plans.at(0)
+    state.autoPlan ?? findPlan(plans, transitionTechnique) ?? plans.at(0)
   return { outId, inId, out, incoming, plans, plan, outCue, inCue }
 }

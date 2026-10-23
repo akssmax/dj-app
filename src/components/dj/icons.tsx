@@ -36,6 +36,7 @@ import {
   Tick02Icon,
   MaximizeScreenIcon,
   MinimizeScreenIcon,
+  Target02Icon,
 } from "@hugeicons/core-free-icons"
 
 export const icons = {
@@ -75,6 +76,7 @@ export const icons = {
   maximize: MaximizeScreenIcon,
   plug: PlugIcon,
   minimize: MinimizeScreenIcon,
+  target: Target02Icon,
 }
 export function Icon({
   name,

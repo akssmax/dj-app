@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest"
 import { demoTracks } from "./tracks"
-import { lastLoudPhraseEnd, planTransitions } from "./planner"
+import {
+  lastLoudPhraseEnd,
+  planTransitions,
+  techniqueReadiness,
+} from "./planner"
 import { followFit, recommendTracks } from "./library-scope"
+import { gridConfidence } from "./structure"
 import type { Track } from "./types"
 
 const base: Track = {
@@ -168,5 +173,126 @@ describe("vocal-aware transitions", () => {
     const phrase = (60 / 128) * 64
     const fromOrigin = (bass.outStart - 7.5) / phrase
     expect(Math.abs(fromOrigin - Math.round(fromOrigin))).toBeLessThan(0.001)
+  })
+})
+
+describe("pair-aware auto pick", () => {
+  // Quiet 20 s intro, full body, quiet outro from 240 s.
+  const arranged = (extra: Partial<Track> = {}) =>
+    shaped((t) => (t < 20 ? 0.3 : t < 240 ? 0.85 : 0.3), {
+      genre: "House",
+      ...extra,
+    })
+  const top = (intent: "maintain" | "lift" | "ease") =>
+    planTransitions(arranged(), arranged({ id: "next" }), 0, { intent })[0]
+
+  it("lets the energy goal change the routine, not only the score", () => {
+    expect(["bass", "blend"]).toContain(top("maintain").id)
+    expect(["filter", "dropswap", "cut", "echo", "loop"]).toContain(
+      top("lift").id
+    )
+    expect(["long", "reverb", "crossover", "blend"]).toContain(top("ease").id)
+  })
+
+  it("explains every score with labelled parts around a neutral 60", () => {
+    for (const plan of planTransitions(arranged(), arranged({ id: "n" }), 0)) {
+      const sum = 60 + plan.scoreParts!.reduce((s, p) => s + p.value, 0)
+      expect(plan.score).toBe(Math.round(Math.min(98, Math.max(1, sum))))
+    }
+  })
+
+  it("marks the harmonic blend as a quality of a routine", () => {
+    const plans = planTransitions(arranged(), arranged({ id: "n" }), 0)
+    expect(plans.some((p) => p.id === "harmonic")).toBe(false)
+    expect(plans.some((p) => p.keySafe)).toBe(true)
+  })
+
+  it("reports tempo and genre techniques honestly for a matched same-style pair", () => {
+    const catalog = techniqueReadiness(
+      planTransitions(arranged(), arranged({ id: "n" }), 0)
+    )
+    const status = (id: string) =>
+      catalog.find((item) => item.technique.id === id)!.status
+    expect(status("tempo")).toBe("Not for this pair")
+    expect(status("genre")).toBe("Not for this pair")
+    expect(status("harmonic")).toBe("Ready")
+    expect(status("multideck")).toBe("Not supported yet")
+  })
+})
+
+describe("beatgrid and key confidence", () => {
+  const arranged = (extra: Partial<Track> = {}, grid?: number): Track => ({
+    ...shaped((t) => (t < 20 ? 0.3 : t < 240 ? 0.85 : 0.3), {
+      genre: "Techno",
+      ...extra,
+    }),
+    ...(grid === undefined
+      ? {}
+      : {
+          analysis: {
+            ...shaped((t) => (t < 20 ? 0.3 : t < 240 ? 0.85 : 0.3)).analysis!,
+            gridConfidence: grid,
+          },
+        }),
+  })
+
+  it("measures a steady grid as confident and a wandering one as shaky", () => {
+    const steady = Array.from({ length: 32 }, (_, i) => i * 0.469)
+    const wobbly = steady.map((t, i) => t + (i % 2 ? 0.09 : -0.07))
+    expect(gridConfidence([128, 128, 128.4], steady)).toBeGreaterThan(0.9)
+    expect(gridConfidence([128, 121, 133], wobbly)).toBeLessThan(0.5)
+    expect(gridConfidence([null, null, null], [])).toBe(0)
+  })
+
+  it("drops long blends and favours short exits on a shaky grid", () => {
+    const steady = planTransitions(
+      arranged({}, 0.9),
+      arranged({ id: "n" }, 0.9),
+      0
+    )
+    const shaky = planTransitions(
+      arranged({}, 0.3),
+      arranged({ id: "n" }, 0.9),
+      0
+    )
+    expect(steady.some((p) => p.id === "long")).toBe(true)
+    expect(shaky.some((p) => p.id === "long")).toBe(false)
+    const blend = shaky.find((p) => p.id === "blend")!
+    expect(blend.warnings.join(" ")).toContain("unsteady")
+  })
+
+  it("does not call a blend key-safe when the key estimates are weak", () => {
+    const weak = (id: string) =>
+      ({
+        ...arranged({ id }),
+        analysis: { ...arranged().analysis!, confidence: 0.1 },
+      }) as Track
+    expect(
+      planTransitions(weak("a"), weak("b"), 0).some((p) => p.keySafe)
+    ).toBe(false)
+  })
+})
+
+describe("your taste", () => {
+  const arranged = (extra: Partial<Track> = {}) =>
+    shaped((t) => (t < 20 ? 0.3 : t < 240 ? 0.85 : 0.3), {
+      genre: "House",
+      ...extra,
+    })
+  it("ranks a routine saved for this pair first", () => {
+    const plans = planTransitions(arranged(), arranged({ id: "n" }), 0, {
+      taste: { saved: "echo" },
+    })
+    expect(plans[0].id).toBe("echo")
+    expect(plans[0].reasons[0]).toContain("saved")
+  })
+  it("nudges routines by your ratings for the style pair", () => {
+    const plain = planTransitions(arranged(), arranged({ id: "n" }), 0)
+    const liked = planTransitions(arranged(), arranged({ id: "n" }), 0, {
+      taste: { ratings: { "House|filter": 2 } },
+    })
+    const score = (plans: typeof plain) =>
+      plans.find((p) => p.id === "filter")!.score
+    expect(score(liked)).toBe(Math.min(98, score(plain) + 6))
   })
 })

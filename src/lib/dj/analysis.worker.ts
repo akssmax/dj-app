@@ -1,7 +1,13 @@
 import MusicTempo from "music-tempo"
 import type { Analysis } from "./types"
 import { measureBands, measurePeaks } from "./wave-peaks"
-import { consensusTempo, phraseStructure, vocalPresence } from "./structure"
+import {
+  consensusTempo,
+  gridConfidence,
+  phraseStructure,
+  VOCALS_VERSION,
+  vocalPresence,
+} from "./structure"
 
 // FFT + Krumhansl-Schmuckler profiles: a provisional global key, not ground truth.
 function keyEstimate(samples: Float32Array, sampleRate: number) {
@@ -121,6 +127,7 @@ self.onmessage = (
       peaks: measurePeaks(channels, sampleRate),
       bands,
       vocals,
+      vocalsVersion: VOCALS_VERSION,
       ...phraseStructure(
         bands,
         vocals,
@@ -164,6 +171,7 @@ self.onmessage = (
       return {
         bpm: Math.round(tempo.tempo * 10) / 10,
         first: (tempo.beats[0] ?? 0) + start / sampleRate,
+        beats: tempo.beats,
       }
     } catch {
       /* Quiet, ambient, or non-rhythmic passages have no reliable tempo. */
@@ -172,11 +180,12 @@ self.onmessage = (
   }
   const duration = samples.length / sampleRate
   const opening = tempoAt(0, 45)
-  const bpm = consensusTempo([
+  const estimates = [
     opening?.bpm ?? null,
     tempoAt(duration * 0.5 - 15, 30)?.bpm ?? null,
     tempoAt(duration * 0.75 - 15, 30)?.bpm ?? null,
-  ])
+  ]
+  const bpm = consensusTempo(estimates)
   const beatOffset = opening?.first ?? 0
   const vocals = vocalPresence(channels, sampleRate)
   const structure = phraseStructure(bands, vocals, duration, bpm, beatOffset)
@@ -187,10 +196,12 @@ self.onmessage = (
     peaks,
     bands,
     vocals,
+    vocalsVersion: VOCALS_VERSION,
     ...structure,
     energyCurve,
     bpm,
     beatOffset,
+    gridConfidence: gridConfidence(estimates, opening?.beats ?? []),
     ...key,
     energy: Math.min(10, Math.max(1, Math.round(avg * 28))),
   }

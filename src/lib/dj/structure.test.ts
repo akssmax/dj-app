@@ -47,6 +47,18 @@ describe("vocal / lead presence", () => {
     const song = bed.map((v, i) => v + voice[i])
     expect(mean(vocalPresence([song, song], RATE))).toBeGreaterThan(0.5)
   })
+  it("hears a voice entering over a wide stereo track", () => {
+    // Wide accompaniment; a centred voice joins for the last 3 seconds.
+    const left = tone(330, () => 0.6),
+      right = tone(330, () => 0.6, 4).map((v) => -v)
+    const voice = tone(196, (t) => (t >= 5 ? syllables(t) : 0))
+    const vocals = vocalPresence(
+      [left.map((v, i) => v + voice[i]), right.map((v, i) => v + voice[i])],
+      RATE
+    )
+    expect(mean(vocals.slice(0, 4))).toBeLessThan(0.15)
+    expect(mean(vocals.slice(6, 8))).toBeGreaterThan(0.5)
+  })
   it("ignores noisy drum hits and silence", () => {
     let seed = 7
     const noise = () =>

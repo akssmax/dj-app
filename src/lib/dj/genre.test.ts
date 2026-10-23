@@ -7,7 +7,7 @@ import {
   profileBonus,
 } from "./genre"
 import { labelSections } from "./sections"
-import { exitTarget, planTransitions } from "./planner"
+import { exitTarget, planTransitions, techniqueReadiness } from "./planner"
 import type { Track } from "./types"
 
 describe("genre families", () => {
@@ -49,19 +49,20 @@ describe("genre families", () => {
   })
 })
 
-/** 240 s at 128 BPM with a labelled arrangement. */
-function arranged(id: string, genre = "House", bpm = 128): Track {
+/** 240 s at 120 BPM (2 s bars) with a labelled arrangement on bar lines. */
+function arranged(id: string, genre = "House", bpm = 120): Track {
   const duration = 240
-  const plan: [number, number, number, number][] = [
-    // start, end, loudness, bass
-    [0, 30, 0.35, 0.8],
-    [30, 100, 0.9, 1],
-    [100, 130, 0.5, 0.15],
-    [130, 140, 0.6, 0.8],
-    [140, 200, 0.95, 1],
-    [200, 240, 0.4, 0.8],
+  const plan: [number, number, number, number, number][] = [
+    // start, end, loudness, bass, mids and highs
+    [0, 30, 0.35, 0.8, 0.4],
+    [30, 100, 0.9, 1, 1],
+    [100, 130, 0.5, 0.15, 0.3],
+    // Build: bass held back while a riser and snare roll climb.
+    [130, 140, 0.6, 0.35, 0.9],
+    [140, 200, 0.95, 1, 1],
+    [200, 240, 0.4, 0.8, 0.4],
   ]
-  const at = (t: number, index: 2 | 3) =>
+  const at = (t: number, index: 2 | 3 | 4) =>
     plan.find(([s, e]) => t >= s && t < e)?.[index] ?? 0.3
   return {
     ...demoTracks[0],
@@ -76,8 +77,8 @@ function arranged(id: string, genre = "House", bpm = 128): Track {
       bands: {
         rms: Array(duration * 50).fill(0.5),
         low: Array.from({ length: duration * 50 }, (_, i) => at(i / 50, 3)),
-        mid: Array(duration * 50).fill(0.5),
-        high: Array(duration * 50).fill(0.5),
+        mid: Array.from({ length: duration * 50 }, (_, i) => at(i / 50, 4)),
+        high: Array.from({ length: duration * 50 }, (_, i) => at(i / 50, 4)),
       },
       vocals: Array(duration).fill(0),
       sections: [30, 100, 130, 140, 200],
@@ -147,8 +148,11 @@ describe("tempo journeys", () => {
       next = { ...arranged("b"), bpm: 140 }
     const bass = planTransitions(out, next).find((p) => p.id === "bass")!
     expect(bass.beatmatch).toBe(true)
-    expect(bass.tempoRamp?.to).toBeCloseTo(140 / 124, 4)
-    expect(bass.incomingRate).toBeCloseTo(1, 4)
+    // Meet partway: the incoming deck slows by half the house stretch (4%)
+    // and the outgoing deck rides the rest.
+    expect(bass.tempoRamp?.meet).toBe(true)
+    expect(bass.tempoRamp?.to).toBeCloseTo((140 / 124) * 0.96, 4)
+    expect(bass.incomingRate).toBeCloseTo(0.96, 4)
     expect(bass.tempoRamp!.start).toBeCloseTo(
       bass.outStart - bass.tempoRamp!.bars * 4 * (60 / 124),
       3
@@ -211,5 +215,46 @@ describe("mix pace", () => {
       140,
       3
     )
+  })
+})
+
+describe("effect and arrangement routines", () => {
+  const bar = 240 / arranged("a").bpm!
+  it("lines both drops up for a double drop", () => {
+    const plan = planTransitions(arranged("a"), arranged("b")).find(
+      (p) => p.id === "doubledrop"
+    )!
+    const dropAt = plan.duration * plan.bassSwapAt!
+    expect(plan.outStart + dropAt).toBeCloseTo(140, 3)
+    expect(plan.inStart + dropAt * plan.rate).toBeCloseTo(30, 3)
+    expect(plan.execution).toBe("bass")
+  })
+  it("rolls the build, then lands the incoming drop a bar later (fake drop)", () => {
+    const plan = planTransitions(arranged("a"), arranged("b")).find(
+      (p) => p.id === "fakedrop"
+    )!
+    expect(plan.outStart).toBe(140)
+    expect(plan.inStart).toBeCloseTo(30 - bar, 3)
+    expect(plan.fx?.[0]).toMatchObject({ kind: "roll", at: -bar })
+  })
+  it("offers brake, backspin, loop roll and filter-in with their own effect", () => {
+    const plans = planTransitions(arranged("a"), arranged("b"))
+    for (const [id, kind] of [
+      ["brake", "brake"],
+      ["backspin", "spinback"],
+      ["roll", "roll"],
+      ["filterin", "filterIn"],
+    ])
+      expect(plans.find((p) => p.id === id)?.fx?.[0].kind).toBe(kind)
+    const catalog = techniqueReadiness(plans)
+    for (const id of ["double", "fake", "brake", "backspin", "roll"])
+      expect(catalog.find((t) => t.technique.id === id)?.status).toBe("Ready")
+  })
+  it("ranks a brake higher when the next track is much slower", () => {
+    const brake = (bpm: number) =>
+      planTransitions(arranged("a"), arranged("b", "House", bpm)).find(
+        (p) => p.id === "brake"
+      )!.score
+    expect(brake(96)).toBeGreaterThan(brake(128))
   })
 })

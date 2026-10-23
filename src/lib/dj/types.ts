@@ -46,6 +46,8 @@ export type Analysis = {
   bands?: WaveBands
   /** Per-second vocal / lead-melody presence 0–1 (estimate). */
   vocals?: number[]
+  /** Version of the vocal detector that produced `vocals`. */
+  vocalsVersion?: number
   /** Detected arrangement changes, seconds on the bar grid. */
   sections?: number[]
   /** Start of the first 16-bar phrase, aligned to detected changes. */
@@ -57,6 +59,8 @@ export type Analysis = {
   camelot: string | null
   energy: number
   confidence: number
+  /** How steady the detected beatgrid is, 0–1; absent on older analyses. */
+  gridConfidence?: number
 }
 export type DeckState = {
   track: Track | null
@@ -112,6 +116,10 @@ export type Transition = {
   outStart: number
   inStart: number
   score: number
+  /** What raised or lowered the score, relative to a neutral 60. */
+  scoreParts?: { label: string; value: number }[]
+  /** A long beatmatched overlap in compatible keys without pitch shift. */
+  keySafe?: boolean
   beatmatch: boolean
   rate: number
   reasons: string[]
@@ -139,10 +147,45 @@ export type Transition = {
   tempoRelation?: 1 | 2 | 0.5
   /** Ride the outgoing deck from `from` to `to` (rate) starting at `start`
    * (outgoing track seconds), finishing as the transition begins. */
-  tempoRamp?: { from: number; to: number; bars: number; start: number }
+  tempoRamp?: {
+    from: number
+    to: number
+    bars: number
+    start: number
+    /** The incoming deck stretches part of the way: a smaller ramp. */
+    meet?: boolean
+  }
   /** Play length the plan was made for, so revalidation uses the same. */
   pace?: MixPace
   steps: { at: number; label: string; why: string }[]
+  /** Automatic effects for this transition (Auto-FX). */
+  fx?: FXCue[]
+}
+export type FXKind =
+  | "echo"
+  | "reverb"
+  | "sweep"
+  | "riser"
+  | "roll"
+  | "brake"
+  | "spinback"
+  | "gate"
+  | "flanger"
+  | "filterIn"
+/** One automatic effect, placed on the outgoing track's beat grid. */
+export type FXCue = {
+  kind: FXKind
+  deck: "out" | "in"
+  /** Start in outgoing-track seconds from the transition start; negative
+   * values are build-ups before it. */
+  at: number
+  /** Length in outgoing-track seconds. */
+  length: number
+  /** Depth, 0–1. */
+  amount: number
+  /** Echo time or roll size in beats. */
+  beats?: number
+  label: string
 }
 export type MixIntent = "maintain" | "lift" | "ease"
 /**

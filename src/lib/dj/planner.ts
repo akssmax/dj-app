@@ -1,8 +1,12 @@
 import { beatOffset as gridOffset } from "./beatgrid"
 import { techniques } from "./lessons"
-import type { MixIntent, MixPace, Track, Transition } from "./types"
+import type { FXCue, MixIntent, MixPace, Track, Transition } from "./types"
 import { pairProfile, profileBonus } from "./genre"
 import { labelSections, overlapWith } from "./sections"
+import { describeFX, planFX } from "./auto-fx"
+import { phaseBonus } from "./set-plan"
+import type { SetPhase } from "./set-plan"
+import type { FXAmount } from "./auto-fx"
 
 export function harmonicCompatibility(a: string | null, b: string | null) {
   if (
@@ -20,6 +24,63 @@ export function harmonicCompatibility(a: string | null, b: string | null) {
   if (a.at(-1) === b.at(-1) && distance === 1) return 0.95
   return 0.2
 }
+const camelotPattern = /^(?:[1-9]|1[0-2])[AB]$/
+
+/** Move a Camelot key by semitones: each semitone is 7 steps on the wheel. */
+export function shiftCamelot(camelot: string, semitones: number) {
+  if (!camelotPattern.test(camelot)) return camelot
+  const n = parseInt(camelot)
+  return `${((((n - 1 + 7 * semitones) % 12) + 12) % 12) + 1}${camelot.at(-1)}`
+}
+
+/**
+ * The keys as they will sound together. `relative` is the incoming deck's
+ * pitch against the outgoing one in semitones. Off a whole semitone by more
+ * than about 15 cents, the tracks sound detuned whatever their keys.
+ */
+export function heardKeys(
+  out: string | null,
+  incoming: string | null,
+  relative: number
+) {
+  const whole = Math.round(relative)
+  const detuned = Math.abs(relative - whole) > 0.15
+  const heardIn =
+    incoming && camelotPattern.test(incoming)
+      ? shiftCamelot(incoming, whole)
+      : incoming
+  return {
+    out,
+    in: heardIn,
+    detuned,
+    cents: Math.round((relative - whole) * 100),
+    compatibility: harmonicCompatibility(out, heardIn),
+  }
+}
+
+/** +2 on the wheel or one semitone up: the classic energy-boost key moves. */
+export function energyBoostMove(out: string, incoming: string) {
+  if (!camelotPattern.test(out) || !camelotPattern.test(incoming)) return null
+  if (incoming === shiftCamelot(out, 1)) return "+1 semitone"
+  const n = parseInt(out)
+  if (incoming === `${((n + 1) % 12) + 1}${out.at(-1)}`) return "+2 Camelot"
+  return null
+}
+
+/** A ±1 semitone key shift that would make clashing keys compatible. */
+export function keyShiftTip(out: string, incoming: string) {
+  for (const shift of [1, -1])
+    if (harmonicCompatibility(out, shiftCamelot(incoming, shift)) >= 0.9)
+      return shift
+  return null
+}
+
+type DeckKey = { shift: number; lock: boolean }
+/** A deck's key settings for planning. */
+export const deckKey = (deck: {
+  keyShift: number
+  keyLock: boolean
+}): DeckKey => ({ shift: deck.keyShift, lock: deck.keyLock })
 type Options = {
   outRate?: number
   incomingRate?: number
@@ -31,7 +92,23 @@ type Options = {
   allowRamp?: boolean
   /** How much of each track plays before mixing out (default full). */
   pace?: MixPace
+  /** Key shift / key lock on each deck, so keys are judged as heard. */
+  outKey?: DeckKey
+  inKey?: DeckKey
+  /** Auto-FX amount and the effects used by recent transitions. */
+  fx?: { amount: FXAmount; recent: string[] }
+  /** Part of the set and the routines already used in it. */
+  setPhase?: { phase: SetPhase; used: string[] }
+  /** Your saved routine for this pair and ratings by style pair. */
+  taste?: { saved?: string; ratings?: Record<string, number> }
 }
+
+/** Key for ratings: the pair's style label and the routine. */
+export const ratingKey = (genre: string | undefined, technique: string) =>
+  `${genre ?? "Mixed"}|${technique}`
+
+/** Key for a saved transition between two tracks. */
+export const pairKey = (outId: string, inId: string) => `${outId}>${inId}`
 const definitions: {
   id: string
   lesson: string
@@ -48,13 +125,6 @@ const definitions: {
   },
   { id: "bass", lesson: "bass", execution: "bass", bars: 16, needsTempo: true },
   { id: "long", lesson: "long", execution: "long", bars: 32, needsTempo: true },
-  {
-    id: "harmonic",
-    lesson: "harmonic",
-    execution: "bass",
-    bars: 16,
-    needsTempo: true,
-  },
   {
     id: "filter",
     lesson: "filter",
@@ -82,10 +152,202 @@ export const transitionChoices = [
         ? "Phrase blend"
         : techniques.find((t) => t.id === recipe.lesson)!.name,
   })),
+  // Resolves to the best key-safe blend (see findPlan).
+  { id: "harmonic", name: "Harmonic / Key Mixing" },
   { id: "dropswap", name: "Drop swap" },
   { id: "breakswap", name: "Breakdown swap" },
   { id: "crossover", name: "Breakdown crossover" },
+  { id: "doubledrop", name: "Double drop" },
+  { id: "fakedrop", name: "Fake drop → real drop" },
+  { id: "roll", name: "Loop roll" },
+  { id: "filterin", name: "Filter in" },
+  { id: "brake", name: "Brake / vinyl stop" },
+  { id: "backspin", name: "Backspin" },
 ]
+
+/** Routines placed by the arrangement (drops, breakdowns), not by cues. */
+export const arrangementRoutines = [
+  "dropswap",
+  "breakswap",
+  "crossover",
+  "doubledrop",
+  "fakedrop",
+]
+
+/** Routines that keep a long beatmatched overlap, where keys matter most. */
+const blendFamily = ["blend", "bass", "long", "breakswap"]
+
+/**
+ * Find a requested routine. "harmonic" is a quality of a blend rather than
+ * a routine of its own: it resolves to the best key-safe blend.
+ */
+export function findPlan(plans: Transition[], id: string | null | undefined) {
+  if (!id) return undefined
+  if (id === "harmonic")
+    return plans.find((p) => p.keySafe && blendFamily.includes(p.id))
+  return plans.find((p) => p.id === id)
+}
+
+/** How each routine serves the energy goal, as a DJ would choose. */
+const intentFit: Record<MixIntent, Record<string, number>> = {
+  lift: {
+    dropswap: 12,
+    filter: 10,
+    cut: 6,
+    echo: 5,
+    loop: 5,
+    breakswap: 4,
+    bass: 0,
+    blend: -2,
+    fade: -4,
+    crossover: -4,
+    long: -6,
+    reverb: -6,
+    doubledrop: 10,
+    fakedrop: 9,
+    roll: 7,
+    backspin: 2,
+    brake: -4,
+    filterin: -4,
+  },
+  ease: {
+    long: 10,
+    reverb: 8,
+    crossover: 7,
+    blend: 5,
+    fade: 4,
+    breakswap: 3,
+    bass: 1,
+    echo: 1,
+    filter: 0,
+    loop: -2,
+    cut: -8,
+    dropswap: -8,
+    filterin: 8,
+    brake: 2,
+    roll: -4,
+    fakedrop: -6,
+    doubledrop: -6,
+    backspin: -6,
+  },
+  maintain: {
+    bass: 6,
+    blend: 5,
+    long: 4,
+    breakswap: 4,
+    filter: 2,
+    loop: 2,
+    dropswap: 1,
+    echo: 0,
+    crossover: -1,
+    fade: -1,
+    reverb: -2,
+    cut: -3,
+    filterin: 3,
+    doubledrop: 2,
+    roll: 0,
+    fakedrop: 0,
+    brake: -4,
+    backspin: -4,
+  },
+}
+
+/** Small tie-breaker: with a beatmatch available, routines that use it lead. */
+function routineBias(id: string, canMatch: boolean) {
+  const matched: Record<string, number> = {
+    bass: 4,
+    long: 3,
+    blend: 3,
+    breakswap: 3,
+    filter: 2,
+    dropswap: 2,
+    loop: 1,
+    echo: -1,
+    reverb: -3,
+    fade: -3,
+    cut: -3,
+    crossover: -4,
+    doubledrop: 2,
+    filterin: 2,
+    fakedrop: 1,
+    roll: -1,
+    brake: -4,
+    backspin: -4,
+  }
+  const free: Record<string, number> = {
+    echo: 4,
+    cut: 3,
+    crossover: 3,
+    dropswap: 2,
+    fade: 2,
+    reverb: 1,
+    brake: 3,
+    backspin: 2,
+    fakedrop: 2,
+  }
+  return (canMatch ? matched : free)[id] ?? 0
+}
+
+/**
+ * Fit with the arrangement at the chosen points: a quiet DJ intro invites a
+ * layered blend; an incoming track that starts at full energy, or an
+ * outgoing one still at full energy, calls for a short or FX exit.
+ */
+function arrangementFit(
+  execution: Transition["execution"],
+  exit: number | null,
+  entry: number | null
+) {
+  const layered = ["blend", "bass", "long", "filter", "loop"].includes(
+    execution
+  )
+  const quick = ["cut", "echo"].includes(execution)
+  let fit = 0
+  if (entry !== null) {
+    if (entry < 0.55 && layered) fit += 4
+    if (entry > 0.8)
+      fit += execution === "long" ? -8 : layered ? -5 : quick ? 5 : 0
+  }
+  if (exit !== null) {
+    if (exit > 0.8)
+      fit +=
+        execution === "long"
+          ? -6
+          : quick || execution === "filter"
+            ? 3
+            : layered
+              ? -3
+              : 0
+    if (exit < 0.45 && ["blend", "bass", "long"].includes(execution)) fit += 2
+  }
+  return fit
+}
+
+/** The strongest reasons behind a score, e.g. "Energy goal +10 · Vocals −9". */
+export function scoreSummary(plan: Transition, count = 2) {
+  const parts = plan.scoreParts ?? []
+  const ups = parts
+    .filter((p) => p.value >= 2)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, count)
+  const down = parts
+    .filter((p) => p.value <= -2)
+    .sort((a, b) => a.value - b.value)
+    .slice(0, 1)
+  return [...ups, ...down]
+    .map(
+      (p) =>
+        `${p.label} ${p.value > 0 ? "+" : "−"}${Math.abs(Math.round(p.value))}`
+    )
+    .join(" · ")
+}
+
+/** Sum labelled score parts into a 1–98 score. */
+function total(parts: { label: string; value: number }[], cap = 98) {
+  return Math.round(
+    Math.min(cap, Math.max(1, 60 + parts.reduce((sum, p) => sum + p.value, 0)))
+  )
+}
 
 export function transitionSteps(
   execution: Transition["execution"],
@@ -305,6 +567,15 @@ export function sectionEnergy(track: Track, position: number, length: number) {
 }
 const energyAt = sectionEnergy
 
+/**
+ * Beatgrid trust for a track: 1 when the DJ set the grid by hand, the
+ * analysis estimate otherwise, null when unknown (older analyses).
+ */
+export function gridTrust(track: Track) {
+  if (track.grid) return 1
+  return track.analysis?.gridConfidence ?? null
+}
+
 /** Where 16-bar phrases start: a corrected grid wins, then the detected
  * phrase alignment, then the first beat. */
 export function phraseOrigin(track: Track) {
@@ -458,10 +729,14 @@ export function planTransitions(
     phrase = beat * 64
   const tempoKnown =
     !!out.bpm && out.bpm > 0 && !!incoming.bpm && incoming.bpm > 0
+  const profile = pairProfile(out, incoming)
   // Tempo journey: beatmatch directly, at half/double time (174 ↔ 87), or
-  // ride the outgoing deck toward the incoming tempo before the blend.
+  // ride the outgoing deck toward the incoming tempo before the blend. How
+  // far a track may be stretched follows the style (vocals expose it most).
   const fits = (r: number) =>
-    Math.abs(r / existingInRate - 1) <= 0.08 && r >= 0.84 && r <= 1.16
+    Math.abs(r / existingInRate - 1) <= profile.maxStretch + 1e-9 &&
+    r >= 0.84 &&
+    r <= 1.16
   const relationFor = (r: number): 1 | 2 | 0.5 | null =>
     !tempoKnown
       ? null
@@ -477,11 +752,21 @@ export function planTransitions(
     options.allowRamp !== false
   )
     for (const m of [1, 2, 0.5] as const) {
-      const to = (existingInRate * incoming.bpm! * m) / bpm
-      if (to < 0.84 || to > 1.16 || Math.abs(to / outRate - 1) > 0.16) continue
+      const full = (existingInRate * incoming.bpm! * m) / bpm
+      if (full < 0.84 || full > 1.16 || Math.abs(full / outRate - 1) > 0.16)
+        continue
+      // Meet partway: the incoming deck takes up to half its style's
+      // stretch, the outgoing deck rides the rest, so neither is obvious.
+      const share = profile.maxStretch / 2
+      const partway = full * (full > outRate ? 1 - share : 1 + share)
+      const meet = Math.abs(partway - outRate) < Math.abs(full - outRate)
+      const to = meet ? partway : full
       const change = Math.abs(to - outRate) * bpm
-      const bars = Math.min(64, Math.max(16, Math.round((change * 2) / 4) * 4))
-      tempoRamp = { from: outRate, to, bars, start: 0 }
+      const bars = Math.min(
+        64,
+        Math.max(8, Math.ceil(change / profile.rampBpmPerBar / 4) * 4)
+      )
+      tempoRamp = { from: outRate, to, bars, start: 0, meet }
       multiple = m
       mixOutRate = to
       break
@@ -490,16 +775,53 @@ export function planTransitions(
     targetRate = ratio * mixOutRate
   const canMatch = tempoKnown && fits(targetRate)
   const rampLength = tempoRamp ? tempoRamp.bars * 4 * beat : 0
-  const profile = pairProfile(out, incoming)
-  const harmonic = harmonicCompatibility(out.camelot, incoming.camelot),
-    pitchChanges = canMatch && Math.abs(ratio - 1) > 0.005
+  // Keys as heard: tempo moves pitch unless key lock is on, plus any key
+  // shift. Only the pitch of one deck against the other matters.
+  const outKey = options.outKey ?? { shift: 0, lock: false },
+    inKey = options.inKey ?? { shift: 0, lock: false }
+  const inRateHeard = canMatch ? targetRate : existingInRate
+  const relative =
+    (inKey.lock ? 0 : 12 * Math.log2(inRateHeard)) +
+    inKey.shift -
+    ((outKey.lock ? 0 : 12 * Math.log2(mixOutRate)) + outKey.shift)
+  const keys = heardKeys(out.camelot, incoming.camelot, relative)
+  // Uncertain key estimates count less: pull them toward "unknown" (0.5).
+  const keyTrust = Math.min(
+    1,
+    (out.analysis?.confidence ?? 0.4) / 0.4,
+    (incoming.analysis?.confidence ?? 0.4) / 0.4
+  )
+  const intent = options.intent ?? "maintain"
+  const boost =
+    intent === "lift" && keys.out && keys.in
+      ? energyBoostMove(keys.out, keys.in)
+      : null
+  const harmonic =
+      0.5 +
+      ((boost
+        ? 0.8
+        : // Slightly detuned (15–35 cents) still blends; further apart, not.
+          Math.abs(keys.cents) > 35
+          ? 0.3
+          : keys.compatibility - (keys.detuned ? 0.1 : 0)) -
+        0.5) *
+        keyTrust,
+    pitchChanges = canMatch && Math.abs(relative) > 0.05
+  const keyTip =
+    keys.out && keys.in && harmonic < 0.5
+      ? keyShiftTip(keys.out, keys.in)
+      : null
   const offset = Math.max(0, phraseOrigin(out)),
     entry = inCue ?? Math.max(0, phraseOrigin(incoming))
   const vocalsKnown =
     !!out.analysis?.vocals?.length && !!incoming.analysis?.vocals?.length
+  // A shaky beatgrid drifts over long overlaps: keep blends short.
+  const trust = [gridTrust(out), gridTrust(incoming)].filter(
+    (v): v is number => v !== null
+  )
+  const shakyGrid = trust.length > 0 && Math.min(...trust) < 0.5
   const pace = options.pace ?? "full"
-  const intent = options.intent ?? "maintain",
-    energyDelta = ((incoming.energy ?? 5) - (out.energy ?? 5)) / 10
+  const energyDelta = ((incoming.energy ?? 5) - (out.energy ?? 5)) / 10
   const energyFit =
     1 -
     Math.min(
@@ -508,17 +830,13 @@ export function planTransitions(
         energyDelta - (intent === "lift" ? 0.2 : intent === "ease" ? -0.2 : 0)
       )
     )
-  return definitions
+  const planned = definitions
     .filter(
       (d) =>
         (!d.needsTempo || canMatch) &&
-        (d.id !== "harmonic" ||
-          (harmonic >= 0.9 &&
-            !!out.camelot &&
-            !!incoming.camelot &&
-            !pitchChanges)) &&
         (d.id !== "long" ||
-          (harmonic >= 0.8 &&
+          (!shakyGrid &&
+            harmonic >= 0.8 &&
             profile.longBars !== null &&
             multiple === 1 &&
             pace !== "quick"))
@@ -690,70 +1008,93 @@ export function planTransitions(
         match && (outCue !== null || inCue !== null) && cuePhaseError > 0.05
           ? `Selected cues differ by ${cuePhaseError.toFixed(2)} beats within the bar. Audition them, choose phrase cues, or use a cut / FX exit.`
           : undefined
-      const genreFit = lesson.genres.some(
+      const genreMatch = lesson.genres.some(
         (g) =>
-          g === "All genres" ||
+          g !== "All genres" &&
           [out.genre, incoming.genre].some((genre) =>
             genre.toLowerCase().includes(g.toLowerCase())
           )
       )
+      const genreFit = genreMatch || lesson.genres.includes("All genres")
       const longOverlap = match && duration > beat * 32,
         repeated = options.recent?.slice(-3).includes(d.id) ? 9 : 0
-      const base = canMatch
-        ? ["bass", "long"].includes(d.execution)
-          ? 78
-          : d.execution === "blend"
-            ? 74
-            : d.execution === "filter"
-              ? 70
-              : d.execution === "loop"
-                ? 66
-                : 52
-        : d.execution === "echo"
-          ? 78
-          : d.execution === "cut"
-            ? 74
-            : d.execution === "fade"
-              ? 69
-              : 60
-      const intentBonus =
-        (intent === "lift" && ["cut", "bass", "filter"].includes(d.id)
-          ? 8
-          : intent === "ease" && ["long", "reverb", "blend"].includes(d.id)
-            ? 8
-            : 0) +
-        // Quick sets favour fast handovers: echo outs and cuts.
-        (pace === "quick" && ["cut", "echo"].includes(d.id) ? 6 : 0)
-      const score = Math.round(
-        Math.min(
-          98,
-          Math.max(
-            1,
-            base +
-              intentBonus +
-              (genreFit ? 7 : 0) +
-              energyFit * 6 +
-              (longOverlap ? (harmonic - 0.5) * 15 * profile.keyWeight : 0) +
-              // The lesson's own genre fit already rewards suitable styles;
-              // the profile then only penalises what the style avoids.
-              (genreFit
-                ? Math.min(0, profileBonus(profile, d.id))
-                : profileBonus(profile, d.id)) -
-              (pitchChanges && longOverlap ? 5 : 0) -
-              repeated -
-              (d.execution === "reverb" && (exitEnergy ?? 0.5) > 0.65
-                ? 12
-                : 0) -
-              // Two voices or leads at once: long blends suffer most.
-              (clash ?? 0) *
-                profile.vocalWeight *
-                (duration >= beat * 32 ? 30 : duration >= beat * 8 ? 14 : 3) +
-              (short ? risk * 28 : 0)
-          )
-        )
-      )
+      const keySafe =
+        blendFamily.includes(d.id) &&
+        match &&
+        duration >= beat * 32 &&
+        harmonic >= 0.9 &&
+        !boost &&
+        !!out.camelot &&
+        !!incoming.camelot &&
+        !keys.detuned
+      const entryEnergy = energyAt(incoming, inStart, inLength)
+      const scoreParts = [
+        { label: "Routine", value: routineBias(d.id, canMatch) },
+        {
+          label: "Energy goal",
+          value:
+            (intentFit[intent][d.id] ?? 0) +
+            // Quick sets favour fast handovers: echo outs and cuts.
+            (pace === "quick" && ["cut", "echo"].includes(d.id) ? 6 : 0),
+        },
+        { label: "Energy match", value: energyFit * 6 },
+        {
+          // The lesson's own genre fit already rewards suitable styles;
+          // the profile then only penalises what the style avoids.
+          label: "Genre",
+          value:
+            (genreMatch ? 6 : genreFit ? 3 : 0) +
+            (genreFit
+              ? Math.min(0, profileBonus(profile, d.id))
+              : profileBonus(profile, d.id)),
+        },
+        {
+          label: "Arrangement",
+          value:
+            arrangementFit(d.execution, exitEnergy, entryEnergy) -
+            (d.execution === "reverb" && (exitEnergy ?? 0.5) > 0.65 ? 12 : 0) -
+            (!short && duration < requested - 0.001 ? 6 : 0),
+        },
+        {
+          label: "Beatgrid",
+          value: !shakyGrid
+            ? 0
+            : match && duration > beat * 32
+              ? -6
+              : ["echo", "cut", "fade", "reverb"].includes(d.execution)
+                ? 3
+                : 0,
+        },
+        {
+          label: "Keys",
+          value:
+            (longOverlap ? (harmonic - 0.5) * 10 * profile.keyWeight : 0) +
+            (keySafe ? 2 : 0) +
+            (boost && longOverlap ? 3 : 0) -
+            (keys.detuned && longOverlap ? 5 : 0),
+        },
+        {
+          // Two voices or leads at once: long blends suffer most. Short
+          // exits earn back the clash a blend here would cause.
+          label: "Vocals",
+          value:
+            -(clash ?? 0) *
+              profile.vocalWeight *
+              (duration >= beat * 32 ? 30 : duration >= beat * 8 ? 14 : 3) +
+            (short ? risk * 28 : 0),
+        },
+        { label: "Variety", value: -repeated },
+      ]
+        .map((part) => ({ ...part, value: Math.round(part.value * 10) / 10 }))
+        .filter((part) => part.value !== 0)
+      const score = total(scoreParts)
       const warnings = [
         ...(cuePhaseWarning ? [cuePhaseWarning] : []),
+        ...(shakyGrid && match && duration > beat * 32
+          ? [
+              "The beatgrid looks unsteady: a long overlap may drift. Check the grid or choose a short exit.",
+            ]
+          : []),
         ...(!tempoKnown
           ? [
               "Tempo unknown: FX timing and phrase zones use a provisional 120 BPM grid.",
@@ -763,11 +1104,15 @@ export function planTransitions(
                 "Tempo gap exceeds an 8% adjustment or the deck’s pitch range; no forced beatmatch.",
               ]
             : []),
-        ...(pitchChanges && match
+        ...(pitchChanges && match && keys.detuned
           ? [
-              "Tempo changes pitch; key lock is not available. Source-key compatibility may change.",
+              `Tempo change shifts pitch: the incoming track sounds about ${Math.abs(keys.cents)} cents off the outgoing one. Keep melodic overlap short, or turn on key lock.`,
             ]
-          : []),
+          : pitchChanges && match && keys.in !== incoming.camelot
+            ? [
+                `Tempo change shifts pitch: the incoming key sounds as ${keys.in}. Turn on key lock to keep ${incoming.camelot}.`,
+              ]
+            : []),
         ...(!out.camelot || !incoming.camelot
           ? ["Key analysis is incomplete. Listen for melody clashes."]
           : harmonic < 0.8 && longOverlap
@@ -775,9 +1120,10 @@ export function planTransitions(
                 "Source keys are distant: reduce melodic overlap. A mix may still work by ear.",
               ]
             : []),
-        ...(d.execution === "loop"
+        ...(d.execution === "loop" &&
+        (vocalAt(out, outStart, beat * 4) ?? 0) >= 0.35
           ? [
-              "Audition the loop first; vocal and melody density have not been detected.",
+              "The looped bar carries a vocal or lead; a repeating voice is obvious. Audition it first.",
             ]
           : []),
         ...(d.execution === "reverb"
@@ -824,6 +1170,8 @@ export function planTransitions(
           outStart,
           inStart,
           score,
+          scoreParts,
+          keySafe,
           beatmatch: match,
           rate,
           incomingRate,
@@ -844,7 +1192,7 @@ export function planTransitions(
               : "Native tempos retained; brief overlap avoids rhythmic conflict",
             ...(match && tempoRamp
               ? [
-                  `Tempo ramp: deck rides ${(bpm * tempoRamp.from).toFixed(1)} → ${(bpm * tempoRamp.to).toFixed(1)} BPM over ${tempoRamp.bars} bars before the mix`,
+                  `Tempo ramp: deck rides ${(bpm * tempoRamp.from).toFixed(1)} → ${(bpm * tempoRamp.to).toFixed(1)} BPM over ${tempoRamp.bars} bars before the mix${tempoRamp.meet ? "; the incoming deck meets it partway" : ""}`,
                 ]
               : []),
             ...(match && multiple !== 1
@@ -856,8 +1204,13 @@ export function planTransitions(
               ? `Genre jump ${profile.label}: bridging transitions preferred`
               : `Style: ${profile.label} (${profile.blendBars}-bar blends)`,
             out.camelot && incoming.camelot
-              ? `${out.camelot} → ${incoming.camelot}: ${harmonic >= 0.8 ? "source keys compatible" : "favor less melodic overlap"}${pitchChanges && match ? "; pitch shift applies" : ""}`
+              ? `${keys.out} → ${keys.in}${keys.in !== incoming.camelot ? ` (heard; source ${incoming.camelot})` : ""}: ${boost ? `energy-boost key move (${boost})` : keySafe ? "key-safe harmonic blend" : keys.detuned && match ? "detuned by the tempo change" : harmonic >= 0.8 ? "keys compatible" : "favor less melodic overlap"}`
               : "Keys unverified; audition the overlap",
+            ...(keyTip && longOverlap
+              ? [
+                  `Tip: a ${keyTip > 0 ? "+1" : "−1"} key shift on the incoming deck makes the keys compatible`,
+                ]
+              : []),
             outCue !== null
               ? "Uses your selected outgoing cue"
               : target !== null
@@ -912,9 +1265,211 @@ export function planTransitions(
         tempoRamp,
         rampLength,
         pace,
+        energyFit,
+        recent: options.recent ?? [],
       })
     )
+  return planned
+    .concat(
+      effectRoutines(planned, out, incoming, {
+        intent,
+        profile,
+        beat,
+        position,
+        recent: options.recent ?? [],
+      })
+    )
+    .map((plan) => {
+      const set = options.setPhase,
+        taste = options.taste
+      const rating = taste?.ratings?.[ratingKey(plan.genre, plan.id)] ?? 0
+      const extra = [
+        {
+          label: "Set phase",
+          value: set ? phaseBonus(plan.id, set.phase, set.used) : 0,
+        },
+        {
+          label: "Saved for this pair",
+          value: taste?.saved === plan.id ? 40 : 0,
+        },
+        { label: "Your ratings", value: Math.max(-9, Math.min(9, rating * 3)) },
+      ].filter((part) => part.value !== 0)
+      if (!extra.length) return plan
+      const scoreParts = [...(plan.scoreParts ?? []), ...extra]
+      return {
+        ...plan,
+        scoreParts,
+        score: total(
+          scoreParts,
+          arrangementRoutines.includes(plan.id) ? 97 : 98
+        ),
+        reasons:
+          taste?.saved === plan.id
+            ? ["You saved this transition for this pair", ...plan.reasons]
+            : plan.reasons,
+      }
+    })
     .sort((a, b) => b.score - a.score)
+    .map((plan) => {
+      // A routine built on an effect keeps it; others get Auto-FX.
+      if (plan.fx?.length)
+        return {
+          ...plan,
+          reasons: [...plan.reasons, `Effect: ${describeFX(plan.fx)}`],
+        }
+      const fx = planFX(plan, out, incoming, {
+        amount: options.fx?.amount ?? "off",
+        intent,
+        recent: options.fx?.recent ?? [],
+        room: Math.max(0, plan.outStart - position),
+      })
+      return fx.length
+        ? {
+            ...plan,
+            fx,
+            reasons: [...plan.reasons, `Auto-FX: ${describeFX(fx)}`],
+          }
+        : plan
+    })
+}
+
+/**
+ * Routines built on an effect, derived from planned exits: the same exit
+ * and entry with the effect as the transition (brake, backspin, loop roll
+ * on a cut; filter-in on a phrase blend).
+ */
+function effectRoutines(
+  plans: Transition[],
+  out: Track,
+  incoming: Track,
+  c: {
+    intent: MixIntent
+    profile: ReturnType<typeof pairProfile>
+    beat: number
+    position: number
+    recent: string[]
+  }
+): Transition[] {
+  const cut = plans.find((p) => p.id === "cut"),
+    blend = plans.find((p) => p.id === "blend")
+  const bar = c.beat * 4
+  const tempoDrop = out.bpm && incoming.bpm ? incoming.bpm / out.bpm : 1
+  const variant = (
+    base: Transition,
+    id: string,
+    name: string,
+    lessonId: string,
+    fx: FXCue[],
+    why: string,
+    arrangement = 0
+  ): Transition => {
+    const technique = techniques.find((t) => t.id === lessonId)!
+    const scoreParts = [
+      ...(base.scoreParts ?? []).filter(
+        (p) => !["Routine", "Energy goal", "Genre", "Variety"].includes(p.label)
+      ),
+      { label: "Routine", value: routineBias(id, base.beatmatch) },
+      { label: "Energy goal", value: intentFit[c.intent][id] ?? 0 },
+      { label: "Genre", value: profileBonus(c.profile, id) },
+      { label: "Tempo jump", value: arrangement },
+      { label: "Variety", value: c.recent.slice(-3).includes(id) ? -9 : 0 },
+    ].filter((p) => p.value !== 0)
+    return {
+      ...base,
+      id,
+      name,
+      description: why,
+      labels: technique.labels,
+      difficulty: technique.level,
+      fx,
+      scoreParts,
+      score: total(scoreParts),
+    }
+  }
+  const routines: Transition[] = []
+  // A lead-in that has already passed is trimmed when the cues are scheduled.
+  if (cut) {
+    // A brake hides a big drop in tempo; backspins suit hip-hop and party sets.
+    routines.push(
+      variant(
+        cut,
+        "brake",
+        "Brake / vinyl stop",
+        "brake",
+        [
+          {
+            kind: "brake",
+            deck: "out",
+            at: -c.beat * 2,
+            length: c.beat * 2,
+            amount: 1,
+            label: "Brake over two beats",
+          },
+        ],
+        "The outgoing record slows to a stop on the downbeat, then the next track starts: a clear reset that hides any tempo change.",
+        tempoDrop < 0.84 ? 6 : 0
+      ),
+      variant(
+        cut,
+        "backspin",
+        "Backspin",
+        "backspin",
+        [
+          {
+            kind: "spinback",
+            deck: "out",
+            at: -c.beat,
+            length: c.beat,
+            amount: 1,
+            label: "Spinback on the last beat",
+          },
+        ],
+        "The outgoing track spins back on the last beat and the next one drops in: a crowd-pleasing reset across any tempo."
+      )
+    )
+    if (out.bpm)
+      routines.push(
+        variant(
+          cut,
+          "roll",
+          "Loop roll",
+          "roll",
+          [
+            {
+              kind: "roll",
+              deck: "out",
+              at: -bar,
+              length: bar,
+              amount: 1,
+              beats: 1,
+              label: "Loop roll 1 → ¼ beat",
+            },
+          ],
+          "A quantized loop on the outgoing track shrinks from one beat to a quarter, building tension before the next track lands."
+        )
+      )
+  }
+  if (blend)
+    routines.push(
+      variant(
+        blend,
+        "filterin",
+        "Filter in",
+        "filter",
+        [
+          {
+            kind: "filterIn",
+            deck: "in",
+            at: 0,
+            length: blend.duration * 0.5,
+            amount: 1,
+            label: "Incoming opens from low-pass",
+          },
+        ],
+        "The next track rises out of a low-pass filter while the outgoing track keeps the groove, so it arrives gradually."
+      )
+    )
+  return routines
 }
 
 type StructuralContext = {
@@ -934,6 +1489,9 @@ type StructuralContext = {
   tempoRamp: Transition["tempoRamp"]
   rampLength: number
   pace: MixPace
+  /** How well the pair's overall energy suits the goal, 0–1. */
+  energyFit: number
+  recent: string[]
 }
 
 /**
@@ -982,10 +1540,13 @@ function structuralTransitions(
       inStart: number
       duration: number
       beatmatch: boolean
-      base: number
+      /** Bonus for how precisely the arrangement sets this routine up. */
+      arrangement: number
       why: string
       reasons: string[]
       bassSwapAt?: number
+      /** The routine's own effects (always applied). */
+      fx?: FXCue[]
     }
   ) => {
     const incomingRate = fields.beatmatch ? c.targetRate : c.existingInRate
@@ -998,23 +1559,32 @@ function structuralTransitions(
       fields.duration,
       rate
     )
-    const score = Math.round(
-      Math.min(
-        97,
-        Math.max(
-          1,
-          fields.base +
-            profileBonus(c.profile, id) +
-            (c.intent === "lift" && id === "dropswap" ? 6 : 0) +
-            // Shorter paces are about mid-track moments: favour them.
-            (c.pace !== "full" ? 4 : 0) +
-            (fields.beatmatch && fields.duration > c.beat * 16
-              ? (c.harmonic - 0.5) * 12 * c.profile.keyWeight
-              : 0) -
-            (clash ?? 0) * c.profile.vocalWeight * 14
-        )
-      )
-    )
+    const keySafe =
+      fields.beatmatch && fields.duration > c.beat * 32 && c.harmonic >= 0.9
+    const scoreParts = [
+      { label: "Routine", value: routineBias(id, c.canMatch) },
+      { label: "Energy goal", value: intentFit[c.intent][id] ?? 0 },
+      { label: "Energy match", value: c.energyFit * 6 },
+      { label: "Genre", value: profileBonus(c.profile, id) },
+      {
+        // Placed by the arrangement itself; shorter paces are about
+        // mid-track moments, so favour them there.
+        label: "Arrangement",
+        value: fields.arrangement + (c.pace !== "full" ? 4 : 0),
+      },
+      {
+        label: "Keys",
+        value:
+          (fields.beatmatch && fields.duration > c.beat * 16
+            ? (c.harmonic - 0.5) * 10 * c.profile.keyWeight
+            : 0) + (keySafe ? 2 : 0),
+      },
+      { label: "Vocals", value: -(clash ?? 0) * c.profile.vocalWeight * 14 },
+      { label: "Variety", value: c.recent.slice(-3).includes(id) ? -9 : 0 },
+    ]
+      .map((part) => ({ ...part, value: Math.round(part.value * 10) / 10 }))
+      .filter((part) => part.value !== 0)
+    const score = total(scoreParts, 97)
     const technique = lesson(lessonId)
     plans.push({
       id,
@@ -1031,6 +1601,8 @@ function structuralTransitions(
       outStart: fields.outStart,
       inStart: fields.inStart,
       score,
+      scoreParts,
+      keySafe,
       beatmatch: fields.beatmatch,
       rate,
       incomingRate,
@@ -1044,6 +1616,7 @@ function structuralTransitions(
           ? { ...c.tempoRamp, start: fields.outStart - c.rampLength }
           : undefined,
       bassSwapAt: fields.bassSwapAt,
+      fx: fields.fx,
       pace: c.pace,
       reasons: [
         ...fields.reasons,
@@ -1082,12 +1655,81 @@ function structuralTransitions(
       inStart: inDrop.start,
       duration: 0.08 * c.mixOutRate,
       beatmatch: c.canMatch,
-      base: 68,
+      arrangement: 6,
       why: "The outgoing build resolves into the incoming drop, so the next track delivers the payoff. Works across tempos and genres.",
       reasons: [
         `${formatClock(outDrop.start)} build resolves into the incoming drop at ${formatClock(inDrop.start)}`,
       ],
     })
+  const bar = c.beat * 4
+  // Fake drop: the outgoing build stutters into a loop roll and stops; the
+  // incoming track's last build bar plays, then its real drop lands.
+  const rollRate = c.canMatch ? c.targetRate / c.mixOutRate : 1
+  if (
+    outDrop &&
+    inDrop &&
+    inDrop.start - bar * rollRate >= 0 &&
+    outDrop.start - bar >= position &&
+    (!c.tempoRamp || outDrop.start >= position + c.rampLength)
+  )
+    build("fakedrop", "Fake drop → real drop", "fake", "cut", {
+      outStart: outDrop.start,
+      inStart: inDrop.start - bar * rollRate,
+      duration: 0.08 * c.mixOutRate,
+      beatmatch: c.canMatch,
+      arrangement: 5,
+      fx: [
+        {
+          kind: "roll",
+          deck: "out",
+          at: -bar,
+          length: bar,
+          amount: 1,
+          beats: 1,
+          label: "Loop roll 1 → ¼ beat instead of the drop",
+        },
+      ],
+      why: "The build promises a drop, stutters in a loop roll and stops; one bar later the next track's real drop hits.",
+      reasons: [
+        `Rolls the ${formatClock(outDrop.start)} build, then the incoming drop lands at ${formatClock(inDrop.start)}`,
+      ],
+    })
+  // Double drop: both builds run together so both drops hit at once; the
+  // incoming bass takes over on the drop and the outgoing track leaves
+  // eight bars later. Needs a beatmatch and compatible keys.
+  if (outDrop && inDrop && c.canMatch && c.harmonic >= 0.9) {
+    const rate = c.targetRate / c.mixOutRate,
+      quick = c.pace === "quick"
+    const lead =
+      Math.floor(
+        Math.min(
+          (quick ? 4 : 16) * bar,
+          inDrop.start / rate,
+          outDrop.start - Math.max(position, position + c.rampLength)
+        ) /
+          (4 * bar)
+      ) *
+      4 *
+      bar
+    const duration = lead + (quick ? 4 : 8) * bar
+    if (
+      lead >= (quick ? 4 : 8) * bar &&
+      outDrop.start - lead + duration <= out.duration - 0.02 &&
+      inDrop.start - lead * rate + duration * rate <= incoming.duration - 0.02
+    )
+      build("doubledrop", "Double drop", "double", "bass", {
+        outStart: outDrop.start - lead,
+        inStart: inDrop.start - lead * rate,
+        duration,
+        beatmatch: true,
+        arrangement: 6,
+        bassSwapAt: lead / duration,
+        why: "Both builds run together and both drops hit at once; the incoming bassline takes the drop and the outgoing track bows out.",
+        reasons: [
+          `Builds line up over ${Math.round(lead / bar)} bars; both drops hit at ${formatClock(outDrop.start)}`,
+        ],
+      })
+  }
   const breakdowns = outSections.filter(
     (s) =>
       s.label === "breakdown" &&
@@ -1114,7 +1756,7 @@ function structuralTransitions(
       inStart,
       duration,
       beatmatch: true,
-      base: 74,
+      arrangement: 6,
       bassSwapAt: 0.94,
       why: "The incoming track builds under the outgoing breakdown; when the breakdown resolves, the new drop arrives instead.",
       reasons: [
@@ -1134,7 +1776,7 @@ function structuralTransitions(
       inStart: c.firstEntry,
       duration,
       beatmatch: false,
-      base: c.canMatch ? 56 : 73,
+      arrangement: c.canMatch ? 0 : 6,
       why: "During a bass-less breakdown there is no beat to clash, so the next track can fade in at its own tempo.",
       reasons: [
         `Fades in during the ${formatClock(quiet.start)} breakdown at native tempos`,
@@ -1152,43 +1794,130 @@ function formatClock(seconds: number) {
 const family: Record<string, string> = {
   phrase: "blend",
   drop: "dropswap",
-  tempo: "echo",
-  genre: "cut",
+  double: "doubledrop",
+  fake: "fakedrop",
 }
+export type ReadinessStatus =
+  "Ready" | "Possible with prep" | "Not for this pair" | "Not supported yet"
+
+/** Every lesson's status for the loaded pair, with the plan that performs it. */
 export function techniqueReadiness(plans: Transition[]) {
+  const top = plans[0]
+  const result = (
+    technique: (typeof techniques)[number],
+    status: ReadinessStatus,
+    reason: string,
+    plan?: Transition
+  ) => ({ technique, plan, status, reason })
   return techniques.map((technique) => {
+    if (technique.id === "harmonic") {
+      const plan = findPlan(plans, "harmonic")
+      return plan
+        ? result(
+            technique,
+            "Ready",
+            `${plan.name} runs as a key-safe blend for this pair.`,
+            plan
+          )
+        : result(
+            technique,
+            "Not for this pair",
+            "Needs compatible keys, a long beatmatched overlap and no relative pitch shift."
+          )
+    }
+    if (technique.id === "tempo") {
+      const plan = plans.find(
+        (p) => p.tempoRamp || (p.tempoRelation ?? 1) !== 1
+      )
+      if (plan)
+        return result(
+          technique,
+          "Ready",
+          plan.tempoRamp
+            ? "A tempo ramp brings the decks together before the mix."
+            : "A half/double-time beatmatch bridges the tempos.",
+          plan
+        )
+      return plans.length > 0 && top.beatmatch && Math.abs(top.rate - 1) < 0.02
+        ? result(
+            technique,
+            "Not for this pair",
+            "The tempos already match; no tempo transition is needed."
+          )
+        : result(
+            technique,
+            "Possible with prep",
+            "The gap is too wide to ride; an echo out, brake or breakdown crossover hides it.",
+            plans.find((p) => ["echo", "crossover"].includes(p.id))
+          )
+    }
+    if (technique.id === "genre") {
+      if (!plans.length || !top.crossGenre)
+        return result(
+          technique,
+          "Not for this pair",
+          "Both tracks share a style; no genre switch is needed."
+        )
+      const plan = plans.find((p) =>
+        ["echo", "dropswap", "crossover", "cut"].includes(p.id)
+      )
+      return plan
+        ? result(
+            technique,
+            "Ready",
+            `${top.genre}: ${plan.name} bridges the styles.`,
+            plan
+          )
+        : result(
+            technique,
+            "Possible with prep",
+            "Bridge the styles with a cut or FX exit on a phrase."
+          )
+    }
     const plan = plans.find(
       (p) => p.id === (family[technique.id] ?? technique.id)
     )
     if (plan)
-      return {
+      return result(
         technique,
-        plan,
-        status: "Available" as const,
-        reason: "A working routine is available for this pair.",
-      }
-    const reason = ["phrase", "bass", "long", "filter", "loop"].includes(
-      technique.id
-    )
-      ? "Needs closer effective tempos; long blends also need compatible source keys."
-      : technique.id === "harmonic"
-        ? "Needs compatible keys without relative pitch shift; key lock is not implemented."
-        : ["drop", "double", "fake"].includes(technique.id)
-          ? "Confirm both drop cues by ear; drop detection and automatic drop routines are planned."
-          : ["vocal", "acapella", "mashup", "percussion"].includes(technique.id)
-            ? "Requires verified sparse/vocal sections or prepared stems; no vocal separation or density detection yet."
-            : technique.id === "multideck"
-              ? "Requires three or four decks; this engine currently has two."
-              : ["scratch", "baby", "backspin", "brake", "tone"].includes(
-                    technique.id
-                  )
-                ? "Requires additional scratch, reverse, pitch or brake audio processing."
-                : "Practice with prepared cues and manual controls; no automatic routine yet."
-    return {
+        "Ready",
+        "A working routine is available for this pair.",
+        plan
+      )
+    if (["phrase", "bass", "long", "filter", "loop"].includes(technique.id))
+      return result(
+        technique,
+        "Not for this pair",
+        "Needs closer effective tempos; long blends also need compatible source keys."
+      )
+    if (["drop", "double", "fake"].includes(technique.id))
+      return result(
+        technique,
+        "Possible with prep",
+        "Needs a detected drop in both tracks; confirm both drop cues by ear."
+      )
+    if (["vocal", "acapella", "mashup", "percussion"].includes(technique.id))
+      return result(
+        technique,
+        "Not supported yet",
+        "Requires stem separation; there is no vocal separation or density detection yet."
+      )
+    if (technique.id === "multideck")
+      return result(
+        technique,
+        "Not supported yet",
+        "Requires three or four decks; this engine currently has two."
+      )
+    if (["scratch", "baby", "backspin", "brake", "tone"].includes(technique.id))
+      return result(
+        technique,
+        "Possible with prep",
+        "A hands-on skill: practice it with the jog wheel, pitch and pads."
+      )
+    return result(
       technique,
-      plan: undefined,
-      status: "Needs preparation" as const,
-      reason,
-    }
+      "Possible with prep",
+      "Practice with prepared cues and manual controls; no automatic routine yet."
+    )
   })
 }

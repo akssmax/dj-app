@@ -1,3 +1,5 @@
+import type { SetSettings } from "@/lib/dj/set-plan"
+import type { FXAmount } from "@/lib/dj/auto-fx"
 import { createContext, useContext } from "react"
 import type { DJEngine } from "@/lib/dj/engine"
 import type { LibraryDatabase } from "@/lib/dj/storage"
@@ -20,6 +22,22 @@ export type DJContextValue = {
   startAutomix: (out: DeckId) => Promise<void>
   stopAutomix: () => void
   resetAutomixHistory: () => void
+  /** Play this track next in Automix (null clears), or leave it out. */
+  pinAutomix: (trackId: string | null) => void
+  skipAutomix: (trackId: string) => void
+  /** The last automatic transition, to rate or save for the pair. */
+  lastTransition: {
+    out: string
+    incoming: string
+    name: string
+    genre?: string
+    technique: string
+    /** 1 = liked, -1 = disliked, 0 = not rated. */
+    rating: -1 | 0 | 1
+    saved: boolean
+  } | null
+  rateTransition: (value: -1 | 1) => void
+  saveTransition: () => void
   database: LibraryDatabase
   tracks: Track[]
   ready: boolean
@@ -88,6 +106,8 @@ export type DJContextValue = {
   setLayout: (value: StudioLayout) => void
   setMixIntent: (value: MixIntent) => void
   setMixPace: (value: MixPace) => void
+  setFXAmount: (value: FXAmount) => void
+  setSetPlan: (value: Partial<SetSettings>) => void
   setTransitionTechnique: (value: string | null) => void
   transitionPreview: boolean
   setTransitionPreview: (value: boolean) => void

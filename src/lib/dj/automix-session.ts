@@ -3,6 +3,8 @@ import type { DJEngine } from "./engine"
 import { recommendTracks } from "./library-scope"
 import type { LibraryDatabase } from "./storage"
 import type { DeckId, Track } from "./types"
+import { arcAt, setProgress } from "./set-plan"
+import type { SetPhase } from "./set-plan"
 
 export type AutomixState = {
   active: boolean
@@ -17,6 +19,14 @@ export type AutomixState = {
   playedIds: string[]
   nextId: string | null
   message: string
+  /** Where the set is on its arc, and the tracks planned after the next. */
+  set: {
+    fraction: number
+    phase: SetPhase
+    energy: number
+    bpm: number | null
+    upcoming: string[]
+  } | null
 }
 
 export const emptyAutomix: AutomixState = {
@@ -25,6 +35,7 @@ export const emptyAutomix: AutomixState = {
   playedIds: [],
   nextId: null,
   message: "",
+  set: null,
 }
 
 type Options = {
@@ -32,12 +43,24 @@ type Options = {
   session: LibraryDatabase["session"]
   cues: LibraryDatabase["cues"]
   labels: LibraryDatabase["cueLabels"]
+  saved: LibraryDatabase["savedTransitions"]
+  ratings: LibraryDatabase["transitionRatings"]
 }
 
 /** Owns a continuous mix; a one-off engine transition never starts a new run. */
 export class AutomixSession {
   state = { ...emptyAutomix }
   private played = new Set<string>()
+  /** Played tracks in order, for artist / vibe / key history. */
+  private history: Track[] = []
+  private setStartedAt: number | null = null
+  /** Routines used in the current part of the set. */
+  private usage: { phase: SetPhase | null; ids: string[] } = {
+    phase: null,
+    ids: [],
+  }
+  private pinned: string | null = null
+  private skipped = new Set<string>()
   private unavailable = new Set<string>()
   private generation = 0
   private internalDepth = 0
@@ -88,6 +111,7 @@ export class AutomixSession {
         !this.played.has(deck.track.id)
       ) {
         this.played.add(deck.track.id)
+        this.history.push(deck.track)
         added = true
       }
     }
@@ -178,6 +202,11 @@ export class AutomixSession {
   resetHistory() {
     if (this.state.active) return
     this.played.clear()
+    this.history = []
+    this.setStartedAt = null
+    this.usage = { phase: null, ids: [] }
+    this.skipped.clear()
+    this.pinned = null
     const out = outgoingDeck(this.engine.state),
       deck = this.engine.state[out]
     if (
@@ -202,6 +231,7 @@ export class AutomixSession {
     if (this.state.active) return
     this.resumeRequested = false
     this.unavailable.clear()
+    this.setStartedAt ??= Date.now()
     this.observe()
     const source = this.engine.state[out]
     if (
@@ -243,15 +273,50 @@ export class AutomixSession {
     )
   }
 
-  private rank(out: DeckId, pool: Track[]) {
+  /** The set's targets for the next track and the two after it. */
+  private arc(pool: Track[]) {
+    const settings = this.getOptions().session.setPlan
+    if (!settings.follow) return null
+    const remaining = pool.filter(
+      (track) => !this.played.has(track.id) && track.available !== false
+    ).length
+    const fraction = setProgress(
+      settings,
+      (Date.now() - (this.setStartedAt ?? Date.now())) / 1000,
+      this.played.size,
+      remaining
+    )
+    // About 3½ minutes per track at DJ pace.
+    const step =
+      settings.minutes > 0
+        ? 210 / (settings.minutes * 60)
+        : 1 / Math.max(1, this.played.size + remaining)
+    const now = arcAt(settings, fraction)
+    if (this.usage.phase !== now.phase)
+      this.usage = { phase: now.phase, ids: [] }
+    return {
+      fraction,
+      now,
+      ahead: [1, 2].map((k) => arcAt(settings, fraction + step * k)),
+    }
+  }
+
+  private rank(out: DeckId, pool: Track[], revalidate = false) {
     const deck = this.engine.state[out],
-      options = this.getOptions()
-    return recommendTracks(
+      options = this.getOptions(),
+      arc = this.arc(this.getOptions().pool)
+    this.engine.setTempoTarget(arc?.now.bpm ?? null)
+    const candidates = pool.filter(
+      (track) => !this.unavailable.has(track.id) && !this.skipped.has(track.id)
+    )
+    // A pinned track plays next when it is still available.
+    const pinned = candidates.filter((track) => track.id === this.pinned)
+    const result = recommendTracks(
       deck.track,
-      pool.filter((track) => !this.unavailable.has(track.id)),
+      pinned.length ? pinned : candidates,
       undefined,
       this.engine.plannedRate(out),
-      options.session.mixIntent,
+      arc?.now.intent ?? options.session.mixIntent,
       {
         position: deck.position,
         recent: options.session.recentTransitions,
@@ -261,10 +326,69 @@ export class AutomixSession {
         labels: options.labels,
         played: this.played,
         lookahead: true,
-        pace: options.session.mixPace,
+        pace: arc?.now.pace ?? options.session.mixPace,
+        fx: {
+          amount: options.session.fxAmount,
+          recent: options.session.recentFX,
+        },
+        taste: { saved: options.saved, ratings: options.ratings },
+        set: arc
+          ? {
+              now: arc.now,
+              ahead: arc.ahead,
+              history: [
+                ...this.history.filter((t) => t.id !== deck.track?.id),
+                ...(deck.track ? [deck.track] : []),
+              ],
+              used: this.usage.ids,
+            }
+          : undefined,
         limit: 1,
       }
     ).at(0)
+    // Revalidating one loaded track says nothing about the tracks after it.
+    if (!revalidate)
+      this.emit({
+        set: arc
+          ? {
+              fraction: arc.fraction,
+              phase: arc.now.phase,
+              energy: arc.now.energy,
+              bpm: arc.now.bpm,
+              upcoming: result?.path.map((track) => track.id) ?? [],
+            }
+          : null,
+      })
+    return result
+  }
+
+  /** Play this track next (once). */
+  pin(trackId: string | null) {
+    this.pinned = trackId
+    this.skipped.delete(trackId ?? "")
+    this.replan()
+  }
+
+  /** Leave this track out of the rest of the set. */
+  skip(trackId: string) {
+    this.skipped.add(trackId)
+    if (this.pinned === trackId) this.pinned = null
+    this.replan()
+  }
+
+  /** Re-pick the next track if its transition hasn't begun. */
+  private replan() {
+    if (
+      !this.state.active ||
+      !["selecting", "mixing"].includes(this.state.phase) ||
+      this.engine.state.transition > 0
+    )
+      return
+    const out = this.engine.state.autoOut ?? outgoingDeck(this.engine.state)
+    if (!this.engine.state[out].playing) return
+    const generation = ++this.generation
+    this.own(() => this.engine.cancelAuto())
+    void this.prepare(out, generation)
   }
 
   private async prepare(out: DeckId, generation: number): Promise<void> {
@@ -340,13 +464,15 @@ export class AutomixSession {
       await this.prepare(out, generation)
       return
     }
-    const revalidated = this.rank(out, [incoming.track])
+    const revalidated = this.rank(out, [incoming.track], true)
     if (!revalidated)
       return this.fail(
         "The selected exit cue has passed or this transition no longer fits. Adjust the mix controls to continue."
       )
     this.emit({ phase: "mixing", message: `Next: ${next.track.title}` })
     this.pendingPlay = source.playing ? null : out
+    if (revalidated.track.id === this.pinned) this.pinned = null
+    this.usage.ids.push(revalidated.plan.id)
     await this.own(() => this.engine.startAuto(out, revalidated.plan))
     if (!this.live(generation)) return
     this.pendingPlay = null

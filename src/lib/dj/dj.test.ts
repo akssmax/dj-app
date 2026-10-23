@@ -1,12 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
+  findPlan,
   harmonicCompatibility,
   planTransitions,
   techniqueReadiness,
 } from "./planner"
 import { decodeFLX4, FLX4Decoder } from "./midi"
 import { scoreTransition } from "./feedback"
-import { DJEngine, deckOutputWarning, outgoingDeck } from "./engine"
+import {
+  DJEngine,
+  deckOutputWarning,
+  needsStructureRefresh,
+  outgoingDeck,
+} from "./engine"
+import { VOCALS_VERSION } from "./structure"
 import { demoTracks } from "./tracks"
 import { techniques, genreGuide } from "./lessons"
 import type { Track } from "./types"
@@ -33,6 +40,17 @@ vi.mock("./pitch-control", () => ({
   },
 }))
 
+describe("analysis refresh", () => {
+  it("re-measures vocals saved by an older detector", () => {
+    const current = analyzed.analysis!
+    expect(needsStructureRefresh(current)).toBe(false)
+    expect(
+      needsStructureRefresh({ ...current, vocalsVersion: undefined })
+    ).toBe(true)
+    expect(needsStructureRefresh({ ...current, bands: undefined })).toBe(true)
+  })
+})
+
 const analyzed: Track = {
   ...demoTracks[0],
   analysis: {
@@ -44,6 +62,7 @@ const analyzed: Track = {
       high: [0.1, 0.2],
     },
     vocals: [0, 0],
+    vocalsVersion: VOCALS_VERSION,
     energyCurve: [],
     bpm: 128,
     beatOffset: 0,
@@ -245,7 +264,7 @@ describe("musical transition planning", () => {
       { ...analyzed, bpm: 90 },
       { ...incoming, bpm: 140 }
     )
-    expect(plans.map((p) => p.execution).sort()).toEqual([
+    expect([...new Set(plans.map((p) => p.execution))].sort()).toEqual([
       "cut",
       "echo",
       "fade",
@@ -267,7 +286,9 @@ describe("musical transition planning", () => {
   it("offers distinct executable families and preparation requirements across the whole curriculum", () => {
     const plans = planTransitions(analyzed, { ...incoming, bpm: 128 })
     expect(new Set(plans.map((p) => p.execution)).size).toBe(9)
-    expect(plans.find((p) => p.id === "harmonic")).toBeDefined()
+    // Harmonic mixing is a quality of a blend, not a duplicate routine.
+    expect(plans.some((p) => p.id === "harmonic")).toBe(false)
+    expect(findPlan(plans, "harmonic")?.keySafe).toBe(true)
     const catalog = techniqueReadiness(plans)
     expect(catalog).toHaveLength(28)
     expect(catalog.find((t) => t.technique.id === "drop")?.plan).toBeUndefined()
@@ -279,17 +300,15 @@ describe("musical transition planning", () => {
     ).toContain("two")
   })
   it("does not promise harmonic locking when matched playback changes relative pitch", () => {
-    expect(
-      planTransitions(analyzed, incoming).some((p) => p.id === "harmonic")
-    ).toBe(false)
+    expect(planTransitions(analyzed, incoming).some((p) => p.keySafe)).toBe(
+      false
+    )
     const plans = planTransitions(analyzed, {
       ...incoming,
       bpm: 128,
       camelot: "3A",
     })
-    expect(plans.some((p) => p.id === "long" || p.id === "harmonic")).toBe(
-      false
-    )
+    expect(plans.some((p) => p.id === "long" || p.keySafe)).toBe(false)
     expect(plans.some((p) => p.id === "filter")).toBe(true)
     expect(harmonicCompatibility("invalid", "3A")).toBe(0.5)
   })
@@ -527,6 +546,8 @@ class Param {
   setTargetAtTime = vi.fn((value: number) => {
     this.value = value
   })
+  linearRampToValueAtTime = vi.fn()
+  exponentialRampToValueAtTime = vi.fn()
 }
 class NodeMock {
   delayTime = new Param()
@@ -1300,7 +1321,46 @@ describe("audio transport and automix lock", () => {
     )
     expect(engine.state.A.rate).toBeCloseTo(ramp.to, 2)
     expect(engine.state.B.playing).toBe(true)
-    expect(engine.state.B.rate).toBeCloseTo(1, 3)
+    expect(engine.state.B.rate).toBeCloseTo(plan.incomingRate, 3)
+  })
+  it("puts Auto-FX on the audio clock and hands an effect back when its control is touched", async () => {
+    await engine.load("A", analyzed)
+    await engine.load("B", incoming)
+    const plan = planTransitions(analyzed, incoming, 0, {
+      outCue: 8,
+      inCue: 90,
+      fx: { amount: "subtle", recent: [] },
+    }).find((candidate) => candidate.id === "cut")!
+    expect(plan.fx?.[0].kind).toBe("echo")
+    await engine.startAuto("A", plan)
+    await vi.advanceTimersByTimeAsync(7800)
+    const rack = (
+      engine as unknown as {
+        channels: Record<string, { rack: Record<string, NodeMock> }>
+      }
+    ).channels.A.rack
+    expect(rack.echoSend.gain.linearRampToValueAtTime).toHaveBeenCalled()
+    const resets = rack.echoSend.gain.cancelScheduledValues.mock.calls.length
+    engine.setFX("A", { enabled: false })
+    expect(
+      rack.echoSend.gain.cancelScheduledValues.mock.calls.length
+    ).toBeGreaterThan(resets)
+    expect(rack.echoSend.gain.value).toBe(0)
+  })
+  it("eases the incoming deck toward the set's tempo target instead of native", async () => {
+    await engine.load("A", analyzed)
+    await engine.load("B", incoming)
+    engine.setTempoTarget(132.6)
+    const plan = planTransitions(analyzed, incoming, 0, {
+      outCue: 4,
+      inCue: 90,
+    }).find((candidate) => candidate.id === "bass")!
+    await engine.startAuto("A", plan)
+    await vi.advanceTimersByTimeAsync(4200 + plan.duration * 1000 + 200)
+    // 130 BPM track → 132.6 BPM target: 2% faster, not back to 1.
+    expect(engine.plannedRate("B")).toBeCloseTo(1.02, 3)
+    await vi.advanceTimersByTimeAsync(80000)
+    expect(engine.state.B.rate).toBeCloseTo(1.02, 3)
   })
   it("lets a manual tempo change take over from the tempo return", async () => {
     await engine.load("A", analyzed)
@@ -1518,12 +1578,23 @@ describe("audio transport and automix lock", () => {
       source = ctx.sources.at(-1)!
     const path: NodeMock[] = []
     let node: NodeMock | undefined = source
-    while (node && node !== ctx.destination && path.length < 20) {
+    // Follow the dry signal: skip closed sends and the headphone cue.
+    while (node && node !== ctx.destination && path.length < 30) {
       path.push(node)
-      node = node.connections.at(0)
+      node = node.connections.find(
+        (next) => !(ctx.gains.includes(next) && next.gain.value === 0)
+      )
     }
     expect(node).toBe(ctx.destination)
-    const channelGains = path.filter((n) => ctx.gains.includes(n))
+    // Auto-FX rack gains sit open in the path; they are not mix controls.
+    const rack = (
+      engine as unknown as {
+        channels: Record<string, { rack: Record<string, NodeMock> }>
+      }
+    ).channels.B.rack
+    const channelGains = path.filter(
+      (n) => ctx.gains.includes(n) && !Object.values(rack).includes(n)
+    )
     expect(channelGains.map((n) => n.gain.value)).toEqual([1, 1, 0.7])
     expect(
       channelGains.every((n) => n.gain.setValueAtTime.mock.calls.length > 0)
@@ -1875,13 +1946,22 @@ describe("audio transport and automix lock", () => {
   ) {
     const session = {
       ...defaultDatabase.session,
+      // These runs steer by a fixed energy goal, not the set's arc.
+      setPlan: { ...defaultDatabase.session.setPlan, follow: false },
       mixIntent: "lift" as const,
       transitionTechnique: "cut",
       transitionCues: Object.fromEntries(
         pool.map((track) => [track.id, { entry: 0, exit: 1 }])
       ),
     }
-    const options = { pool, session, cues: {}, labels: {} }
+    const options = {
+      pool,
+      session,
+      cues: {},
+      labels: {},
+      saved: {},
+      ratings: {},
+    }
     const notice = vi.fn()
     const mix = new AutomixSession(engine, () => options, load, vi.fn(), notice)
     return { mix, options, notice }

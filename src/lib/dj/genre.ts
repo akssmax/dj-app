@@ -30,6 +30,12 @@ export type TechniqueId =
   | "dropswap"
   | "breakswap"
   | "crossover"
+  | "doubledrop"
+  | "fakedrop"
+  | "roll"
+  | "filterin"
+  | "brake"
+  | "backspin"
 
 export type GenreProfile = {
   family: GenreFamily
@@ -46,6 +52,10 @@ export type GenreProfile = {
   vocalWeight: number
   /** Song-based tracks: no DJ intro, enter at the hook, keep it short. */
   songMode: boolean
+  /** Furthest a track may be sped up or slowed down before it sounds wrong. */
+  maxStretch: number
+  /** Gentlest audible tempo ramp: BPM change per bar. */
+  rampBpmPerBar: number
 }
 
 export const genreProfiles: Record<GenreFamily, GenreProfile> = {
@@ -54,22 +64,26 @@ export const genreProfiles: Record<GenreFamily, GenreProfile> = {
     label: "House",
     blendBars: 16,
     longBars: 32,
-    prefer: ["bass", "blend", "long"],
+    prefer: ["bass", "blend", "long", "filterin"],
     avoid: [],
     keyWeight: 1,
     vocalWeight: 1,
     songMode: false,
+    maxStretch: 0.08,
+    rampBpmPerBar: 0.35,
   },
   techno: {
     family: "techno",
     label: "Techno",
     blendBars: 32,
     longBars: 64,
-    prefer: ["long", "filter", "loop", "bass"],
-    avoid: ["cut"],
+    prefer: ["long", "filter", "loop", "bass", "filterin"],
+    avoid: ["cut", "backspin", "brake"],
     keyWeight: 0.5,
     vocalWeight: 1,
     songMode: false,
+    maxStretch: 0.08,
+    rampBpmPerBar: 0.5,
   },
   trance: {
     family: "trance",
@@ -81,50 +95,60 @@ export const genreProfiles: Record<GenreFamily, GenreProfile> = {
     keyWeight: 1.6,
     vocalWeight: 1.3,
     songMode: false,
+    maxStretch: 0.06,
+    rampBpmPerBar: 0.3,
   },
   dnb: {
     family: "dnb",
     label: "Drum & bass",
     blendBars: 16,
     longBars: null,
-    prefer: ["bass", "dropswap", "echo", "cut"],
+    prefer: ["bass", "dropswap", "echo", "cut", "doubledrop"],
     avoid: ["long", "reverb"],
     keyWeight: 0.8,
     vocalWeight: 1.2,
     songMode: false,
+    maxStretch: 0.06,
+    rampBpmPerBar: 0.5,
   },
   bass: {
     family: "bass",
     label: "Dubstep / bass",
     blendBars: 8,
     longBars: null,
-    prefer: ["dropswap", "cut", "echo"],
+    prefer: ["dropswap", "cut", "echo", "doubledrop", "fakedrop"],
     avoid: ["long", "blend"],
     keyWeight: 0.8,
     vocalWeight: 1.2,
     songMode: false,
+    maxStretch: 0.06,
+    rampBpmPerBar: 0.5,
   },
   edm: {
     family: "edm",
     label: "EDM / big room",
     blendBars: 16,
     longBars: null,
-    prefer: ["dropswap", "echo", "filter"],
+    prefer: ["dropswap", "echo", "filter", "fakedrop", "roll"],
     avoid: ["long"],
     keyWeight: 1.3,
     vocalWeight: 1.4,
     songMode: false,
+    maxStretch: 0.06,
+    rampBpmPerBar: 0.4,
   },
   hiphop: {
     family: "hiphop",
     label: "Hip-hop / pop",
     blendBars: 8,
     longBars: null,
-    prefer: ["cut", "echo", "dropswap"],
+    prefer: ["cut", "echo", "dropswap", "backspin", "brake"],
     avoid: ["long", "loop", "filter"],
     keyWeight: 0.6,
     vocalWeight: 1.6,
     songMode: true,
+    maxStretch: 0.04,
+    rampBpmPerBar: 0.5,
   },
   afro: {
     family: "afro",
@@ -136,6 +160,8 @@ export const genreProfiles: Record<GenreFamily, GenreProfile> = {
     keyWeight: 1,
     vocalWeight: 1,
     songMode: false,
+    maxStretch: 0.06,
+    rampBpmPerBar: 0.35,
   },
   other: {
     family: "other",
@@ -147,6 +173,8 @@ export const genreProfiles: Record<GenreFamily, GenreProfile> = {
     keyWeight: 1,
     vocalWeight: 1,
     songMode: false,
+    maxStretch: 0.08,
+    rampBpmPerBar: 0.4,
   },
 }
 
@@ -251,6 +279,8 @@ export function pairProfile(out: Track, incoming: Track): PairProfile {
     keyWeight: Math.max(a.keyWeight, b.keyWeight),
     vocalWeight: Math.max(a.vocalWeight, b.vocalWeight),
     songMode: a.songMode || b.songMode,
+    maxStretch: Math.min(a.maxStretch, b.maxStretch),
+    rampBpmPerBar: Math.min(a.rampBpmPerBar, b.rampBpmPerBar),
     from,
     to,
     crossGenre: true,

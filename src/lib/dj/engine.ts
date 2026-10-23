@@ -11,15 +11,27 @@ import type {
 import { padFXPresets } from "./pad-fx"
 import { alignBarPhase, beatOffset, echoDelay, snapToBeat } from "./beatgrid"
 import { measurePeaks } from "./wave-peaks"
+import { VOCALS_VERSION } from "./structure"
 import { automationControls, automationFrame } from "./automation"
 import type { AutomationChannel } from "./automation"
 import { matchLoudness, prepareLoudness } from "./loudness"
-import { bassExchangeAt, planTransitions, transitionSteps } from "./planner"
+import {
+  bassExchangeAt,
+  deckKey,
+  planTransitions,
+  transitionSteps,
+} from "./planner"
 import { linkedFingerprint } from "./library-analysis"
 import { readLinkedFile } from "./linked-files"
 import { createPitchNode, registerPitch } from "./pitch-control"
 import type { PitchProcessor } from "./pitch-control"
 import { createScratchNode, registerScratch } from "./scratch-control"
+import { createFXRack, noiseBuffer, resetRack, scheduleCue } from "./fx-rack"
+import type { FXRack } from "./fx-rack"
+import { describeFX, primaryFX } from "./auto-fx"
+import { tracklistCue, tracklistText } from "./tracklist"
+import { renderTransition } from "./transition-preview"
+import type { TracklistEntry } from "./tracklist"
 
 type Channel = {
   gain: GainNode
@@ -36,6 +48,9 @@ type Channel = {
   delay: DelayNode
   feedback: GainNode
   reverbSend: GainNode
+  reverbInput: AudioNode
+  /** Auto-FX nodes, wired once both channels exist. */
+  rack?: FXRack
   cueGain: GainNode
   slipAnchor?: { position: number; time: number; rate: number }
   echoOutTimer?: ReturnType<typeof setTimeout>
@@ -76,6 +91,10 @@ export type EngineState = {
   autoStatus: string
   recording: boolean
   lastRecording: { url: string; name: string } | null
+  /** Tracklist of the last recording: text and CUE sheet downloads. */
+  lastTracklist: { txt: string; cue: string; name: string } | null
+  /** A rendered transition preview is playing. */
+  previewing: boolean
   error: string | null
   controller: {
     fxTarget: "A" | "B" | "both"
@@ -175,6 +194,8 @@ export class DJEngine {
     transition: 0,
     autoStatus: "Ready when you are",
     recording: false,
+    lastTracklist: null,
+    previewing: false,
     lastRecording: null,
     error: null,
     controller: emptyController(),
@@ -183,6 +204,8 @@ export class DJEngine {
   private channels: Partial<Record<DeckId, Channel>> = {}
   private masterNode?: GainNode
   private limiterNode?: DynamicsCompressorNode
+  /** Taps the limiter output for the visualizer; feeds nothing. */
+  private masterAnalyser?: AnalyserNode
   private outputPairs?: {
     master: ChannelSplitterNode
     cue: ChannelSplitterNode
@@ -212,6 +235,11 @@ export class DJEngine {
   >()
   private tappedAt: Partial<Record<DeckId, number[]>> = {}
   private recorder?: MediaRecorder
+  private previewSource?: AudioBufferSourceNode
+  private previewVersion = 0
+  /** Context time the recording began, and what played from when. */
+  private recordingStartedAt = 0
+  private setLog: TracklistEntry[] = []
   private listeners = new Set<() => void>()
   private publishFrame: number | null = null
   private tempoGlides: Partial<
@@ -231,6 +259,9 @@ export class DJEngine {
     duration: number
     /** A planned tempo ramp on the outgoing deck has begun. */
     rampStarted?: boolean
+    /** Auto-FX cues are on the audio clock; their overlay sources. */
+    fxScheduled?: boolean
+    fxSources?: AudioScheduledSourceNode[]
     overrides: Record<DeckId, Partial<AutomationChannel>>
     original: Record<DeckId, AutomationChannel>
     levels: ReturnType<typeof matchLoudness>
@@ -254,7 +285,11 @@ export class DJEngine {
   ) => void
   onHandoff?: (idle: DeckId, playing: DeckId) => void
   onAutoCancel?: () => void
-  onTransition?: (id: string) => void
+  onTransition?: (
+    id: string,
+    fx: string,
+    pair: { out: string; incoming: string; name: string; genre?: string }
+  ) => void
   onQuantizeChange?: (id: DeckId, enabled: boolean) => void
   hardwareLocked = false
 
@@ -316,6 +351,10 @@ export class DJEngine {
     limiter.release.value = 0.12
     this.masterNode.connect(limiter)
     limiter.connect(ctx.destination)
+    this.masterAnalyser = ctx.createAnalyser()
+    this.masterAnalyser.fftSize = 2048
+    this.masterAnalyser.smoothingTimeConstant = 0.5
+    limiter.connect(this.masterAnalyser)
     this.recordNode = ctx.createMediaStreamDestination()
     limiter.connect(this.recordNode)
     this.monitorNode = ctx.createMediaStreamDestination()
@@ -412,6 +451,7 @@ export class DJEngine {
         delay,
         feedback,
         reverbSend,
+        reverbInput: reverbFilter,
         cueGain,
         startTime: 0,
         startOffset: 0,
@@ -419,6 +459,12 @@ export class DJEngine {
         transportVersion: 0,
         pitchVersion: 0,
       }
+    }
+    // Auto-FX racks are created after both channels so node order (and the
+    // signal path of everything above) stays as it was.
+    for (const id of ["A", "B"] as DeckId[]) {
+      const ch = this.channels[id]!
+      ch.rack = createFXRack(ctx, ch, ch.reverbInput)
     }
     this.applyMix()
     this.applyMonitor()
@@ -547,7 +593,7 @@ export class DJEngine {
         this.onAnalysis?.(detailed)
       }
       const loadedAnalysis = this.state[id].track.analysis
-      if (loadedAnalysis && (!loadedAnalysis.bands || !loadedAnalysis.vocals))
+      if (loadedAnalysis && needsStructureRefresh(loadedAnalysis))
         this.backfillBands(id, buffer, version)
       this.state[id].loading = false
       this.applyChannel(id)
@@ -717,7 +763,12 @@ export class DJEngine {
       event: MessageEvent<
         Pick<
           Analysis,
-          "peaks" | "bands" | "vocals" | "sections" | "phraseOffset"
+          | "peaks"
+          | "bands"
+          | "vocals"
+          | "vocalsVersion"
+          | "sections"
+          | "phraseOffset"
         >
       >
     ) => {
@@ -727,7 +778,7 @@ export class DJEngine {
       if (
         this.channels[id]?.loadVersion !== version ||
         !analysis ||
-        (analysis.bands && analysis.vocals)
+        !needsStructureRefresh(analysis)
       )
         return
       deck.track = {
@@ -755,6 +806,18 @@ export class DJEngine {
   /** Audio-clock position for animation; the published state updates every 50 ms. */
   livePosition(id: DeckId) {
     return this.position(id)
+  }
+  /** Master output spectrum (byte magnitudes) for visuals; false before audio starts. */
+  readMasterSpectrum(out: Uint8Array<ArrayBuffer>) {
+    if (!this.masterAnalyser) return false
+    this.masterAnalyser.getByteFrequencyData(out)
+    return true
+  }
+  get masterSpectrumSize() {
+    return this.masterAnalyser?.frequencyBinCount ?? 1024
+  }
+  get sampleRate() {
+    return this.context?.sampleRate ?? 48000
   }
   private position(id: DeckId, time = this.context?.currentTime ?? 0) {
     const deck = this.state[id],
@@ -1239,8 +1302,8 @@ export class DJEngine {
       )
       this.writeParam(ch.pitch.semitones, deck.keyShift)
       source.connect(ch.pitch.node)
-      ch.pitch.node.connect(ch.inputAnalyser)
-    } else source.connect(ch.inputAnalyser)
+      ch.pitch.node.connect(ch.rack?.sourceGate ?? ch.inputAnalyser)
+    } else source.connect(ch.rack?.sourceGate ?? ch.inputAnalyser)
   }
   private refreshPitch(id: DeckId) {
     const ch = this.channels[id]
@@ -1826,6 +1889,24 @@ export class DJEngine {
       }
     }
   }
+  /** Set tempo the mix drifts toward between transitions (null = native). */
+  private tempoTargetBpm: number | null = null
+  /**
+   * Steer the set's tempo: after each automatic mix the new track eases to
+   * this BPM instead of its native tempo, within a ±6% stretch.
+   */
+  setTempoTarget(bpm: number | null) {
+    this.tempoTargetBpm = bpm && Number.isFinite(bpm) && bpm > 0 ? bpm : null
+  }
+  private returnRate(track: Track | null) {
+    if (!this.tempoTargetBpm || !track?.bpm) return 1
+    // Half/double-time tracks steer by the nearest octave of the target.
+    const target = [0.5, 1, 2]
+      .map((m) => this.tempoTargetBpm! * m)
+      .sort((a, b) => Math.abs(a - track.bpm!) - Math.abs(b - track.bpm!))[0]
+    const rate = Math.max(0.94, Math.min(1.06, target / track.bpm))
+    return Math.abs(rate - 1) < 0.002 ? 1 : rate
+  }
   /** Tempo a deck is heading to: the glide target while one runs (native
    * after a mix, or the next track's tempo during a planned ramp). */
   plannedRate(id: DeckId) {
@@ -1838,11 +1919,12 @@ export class DJEngine {
    */
   private startTempoReturn(id: DeckId) {
     const deck = this.state[id]
-    if (!this.context || Math.abs(deck.rate - 1) < 0.002 || deck.syncTo) return
+    const to = this.returnRate(deck.track)
+    if (!this.context || Math.abs(deck.rate - to) < 0.002 || deck.syncTo) return
     const beat = 60 / ((deck.track?.bpm ?? 120) * deck.rate)
     this.tempoGlides[id] = {
       from: deck.rate,
-      to: 1,
+      to,
       start: this.context.currentTime,
       duration: Math.min(75, Math.max(15, 32 * 4 * beat)),
     }
@@ -2443,6 +2525,8 @@ export class DJEngine {
         outCue: now ? null : plan.anchors?.out,
         inCue: plan.anchors?.incoming,
         pace: plan.pace,
+        outKey: deckKey(this.state[out]),
+        inKey: deckKey(this.state[incoming]),
       }
     ).find((p) => p.id === plan.id)
     if (
@@ -2558,6 +2642,54 @@ export class DJEngine {
     if (!this.state[out].playing) this.cancelAuto()
     this.publish()
   }
+  private noise?: AudioBuffer
+  /**
+   * Put the transition's Auto-FX cues on the audio clock. `startTime` is the
+   * context time of the transition start (the outgoing track's outStart).
+   */
+  private scheduleFX(
+    auto: NonNullable<typeof this.automation>,
+    startTime: number
+  ) {
+    auto.fxScheduled = true
+    const ctx = this.context
+    const cues = auto.plan.fx ?? []
+    if (!ctx || !cues.length) return
+    const now = ctx.currentTime,
+      rate = this.plannedRate(auto.out),
+      track = this.state[auto.out].track
+    auto.fxSources = []
+    for (const cue of cues) {
+      const id = cue.deck === "out" ? auto.out : auto.incoming,
+        ch = this.channels[id]
+      if (!ch?.rack || !track) continue
+      let t0 = startTime + cue.at / rate,
+        length = cue.length / rate
+      // A cue that has already begun keeps only its remaining part.
+      if (t0 + length <= now + 0.02) continue
+      if (t0 < now + 0.02) {
+        length -= now + 0.02 - t0
+        t0 = now + 0.02
+      }
+      auto.fxSources.push(
+        ...scheduleCue(ctx, ch.rack, cue, {
+          t0,
+          length,
+          rate,
+          bpm: track.bpm ?? 120,
+          position: snapToBeat(
+            track,
+            Math.max(0, auto.plan.outStart + cue.at),
+            true
+          ),
+          buffer: cue.deck === "out" ? ch.buffer : undefined,
+          overlayInput: ch.inputAnalyser,
+          master: this.masterNode!,
+          noise: () => (this.noise ??= noiseBuffer(ctx)),
+        })
+      )
+    }
+  }
   private controlsAt(
     auto: NonNullable<typeof this.automation>,
     id: DeckId,
@@ -2604,6 +2736,9 @@ export class DJEngine {
               ? [ch[key].gain]
               : []
     for (const param of params) param.cancelScheduledValues(ctx.currentTime)
+    // A hand on the filter, FX or fader also takes it back from Auto-FX.
+    if (ch.rack && (key === "filter" || key === "fx" || key === "volume"))
+      resetRack(ch.rack, ctx.currentTime, key)
     Object.assign(auto.overrides[id], { [key]: controls[key] })
   }
   private restoreAutomation(
@@ -2617,6 +2752,23 @@ export class DJEngine {
             Math.min(1, (this.context.currentTime - auto.start) / auto.duration)
           )
         : 0
+    // Auto-FX: a cancelled mix stops everything now; a finished one keeps
+    // its echo and reverb tails ringing.
+    for (const source of auto.fxSources ?? [])
+      try {
+        if (cancelled) source.stop()
+      } catch {
+        /* Already stopped. */
+      }
+    for (const id of [auto.out, auto.incoming]) {
+      const rack = this.channels[id]?.rack
+      if (!rack || !this.context || !auto.fxScheduled) continue
+      if (cancelled) resetRack(rack, this.context.currentTime)
+      else {
+        resetRack(rack, this.context.currentTime, "volume")
+        resetRack(rack, this.context.currentTime, "filter")
+      }
+    }
     for (const id of [auto.out, auto.incoming]) {
       const ch = this.channels[id]!,
         deck = this.state[id],
@@ -2803,6 +2955,7 @@ export class DJEngine {
     }
     auto.start = start
     auto.started = true
+    if (!auto.fxScheduled) this.scheduleFX(auto, start)
     // Web Audio clock schedules the audible curves; the 50ms UI tick only reflects them.
     const schedule = (param: AudioParam, value: (p: number) => number) => {
       param.cancelScheduledValues(ctx.currentTime)
@@ -2900,6 +3053,26 @@ export class DJEngine {
         ),
       }
     }
+    // Auto-FX builds start before the transition: schedule them from the
+    // outgoing position once their lead-in begins.
+    const lead = auto?.plan.fx?.length
+      ? Math.max(0, ...auto.plan.fx.map((cue) => -cue.at))
+      : 0
+    if (
+      auto &&
+      lead > 0 &&
+      !auto.fxScheduled &&
+      !auto.started &&
+      this.state[auto.out].playing &&
+      this.state[auto.out].position >=
+        auto.plan.outStart - lead - this.state[auto.out].rate * 0.25
+    )
+      this.scheduleFX(
+        auto,
+        this.context.currentTime +
+          (auto.plan.outStart - this.position(auto.out)) /
+            this.state[auto.out].rate
+      )
     if (
       auto &&
       !auto.started &&
@@ -2935,11 +3108,104 @@ export class DJEngine {
         this.restoreAutomation(auto, false)
         this.state.autoStatus = "Transition complete"
         this.startTempoReturn(auto.incoming)
-        this.onTransition?.(auto.plan.id)
+        this.onTransition?.(auto.plan.id, primaryFX(auto.plan.fx), {
+          out: this.state[auto.out].track?.id ?? "",
+          incoming: this.state[auto.incoming].track?.id ?? "",
+          name: auto.plan.name,
+          genre: auto.plan.genre,
+        })
+        const next = this.state[auto.incoming].track
+        if (this.state.recording && next)
+          this.setLog.push({
+            // The new track takes over halfway through the transition.
+            at: Math.max(
+              0,
+              auto.start + auto.duration / 2 - this.recordingStartedAt
+            ),
+            title: next.title,
+            artist: next.artist,
+            transition: [auto.plan.name, describeFX(auto.plan.fx)]
+              .filter(Boolean)
+              .join(" + "),
+          })
         this.onHandoff?.(auto.out, auto.incoming)
       }
     }
     if (changed) this.publish()
+  }
+  /**
+   * Render a planned transition offline and play it: in the headphones when
+   * a cue output is connected, otherwise on the master while both decks are
+   * stopped (it never plays over a live mix).
+   */
+  async previewTransition(out: DeckId, plan: Transition) {
+    const ctx = this.init(),
+      incoming = out === "A" ? "B" : "A"
+    const a = this.channels[out]?.buffer,
+      b = this.channels[incoming]?.buffer
+    if (!a || !b) {
+      this.state.error = "Load both decks to preview the transition."
+      this.publish()
+      return
+    }
+    const headphones = this.state.controller.monitorConnected
+    if (!headphones && (this.state.A.playing || this.state.B.playing)) {
+      this.state.error =
+        "Connect a headphone (cue) output to preview while a deck is playing."
+      this.publish()
+      return
+    }
+    this.stopPreview()
+    const version = ++this.previewVersion
+    this.state.previewing = true
+    this.publish()
+    try {
+      const rendered = await renderTransition(
+        plan,
+        {
+          buffer: a,
+          bpm: this.state[out].track?.bpm ?? null,
+          rate: this.plannedRate(out),
+        },
+        {
+          buffer: b,
+          bpm: this.state[incoming].track?.bpm ?? null,
+          rate: plan.incomingRate,
+        },
+        ctx.sampleRate
+      )
+      // Stopped or replaced while rendering.
+      if (version !== this.previewVersion) return
+      await ctx.resume()
+      const source = (this.previewSource = ctx.createBufferSource())
+      source.buffer = rendered
+      source.connect(headphones ? this.monitorLevel! : this.masterNode!)
+      source.onended = () => {
+        if (this.previewSource !== source) return
+        this.previewSource = undefined
+        this.state.previewing = false
+        this.publish()
+      }
+      source.start()
+    } catch (error) {
+      this.state.previewing = false
+      this.state.error = `Preview could not render: ${error instanceof Error ? error.message : String(error)}`
+      this.publish()
+    }
+  }
+  stopPreview() {
+    this.previewVersion++
+    const source = this.previewSource
+    this.previewSource = undefined
+    try {
+      source?.stop()
+    } catch {
+      /* Not started yet. */
+    }
+    if (this.state.previewing) {
+      this.state.previewing = false
+      this.publish()
+    }
   }
   async toggleRecording() {
     const ctx = this.init()
@@ -2972,13 +3238,55 @@ export class DJEngine {
       if (this.state.lastRecording)
         URL.revokeObjectURL(this.state.lastRecording.url)
       const blob = new Blob(chunks, { type: mime })
+      const base = `cue-mix-${new Date().toISOString().slice(0, 10)}`
       this.state.lastRecording = {
         url: URL.createObjectURL(blob),
-        name: `cue-mix-${new Date().toISOString().slice(0, 10)}.${extension}`,
+        name: `${base}.${extension}`,
       }
+      if (this.state.lastTracklist) {
+        URL.revokeObjectURL(this.state.lastTracklist.txt)
+        URL.revokeObjectURL(this.state.lastTracklist.cue)
+      }
+      const title = `Cue mix ${new Date().toISOString().slice(0, 10)}`
+      this.state.lastTracklist = this.setLog.length
+        ? {
+            txt: URL.createObjectURL(
+              new Blob([tracklistText(this.setLog, title)], {
+                type: "text/plain",
+              })
+            ),
+            cue: URL.createObjectURL(
+              new Blob(
+                [
+                  tracklistCue(
+                    this.setLog,
+                    title,
+                    this.state.lastRecording.name
+                  ),
+                ],
+                { type: "application/x-cue" }
+              )
+            ),
+            name: base,
+          }
+        : null
       this.publish()
     }
     recorder.start(1000)
+    // The tracklist starts with whatever is audible now.
+    this.recordingStartedAt = ctx.currentTime
+    this.setLog = (["A", "B"] as DeckId[])
+      .filter(
+        (id) =>
+          this.state[id].playing &&
+          this.state[id].track &&
+          deckMixGain(this.state, id) > 0.001
+      )
+      .map((id) => ({
+        at: 0,
+        title: this.state[id].track!.title,
+        artist: this.state[id].track!.artist,
+      }))
     this.state.recording = true
     this.publish()
   }
@@ -3059,6 +3367,15 @@ function readMeter(analyser: AnalyserNode, samples: Float32Array<ArrayBuffer>) {
   let sum = 0
   for (const value of samples) sum += value * value
   return Math.min(1, Math.sqrt(sum / samples.length) * 4)
+}
+
+/** Tracks analyzed before band levels or the current vocal detector. */
+export function needsStructureRefresh(analysis: Analysis) {
+  return (
+    !analysis.bands ||
+    !analysis.vocals ||
+    (analysis.vocalsVersion ?? 1) < VOCALS_VERSION
+  )
 }
 
 export function effectiveDeckRate(deck: Pick<DeckState, "rate">) {

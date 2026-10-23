@@ -1,3 +1,6 @@
+import { defaultSetSettings } from "./set-plan"
+import type { SetSettings } from "./set-plan"
+import type { FXAmount } from "./auto-fx"
 import { latestWriter } from "./latest-writer"
 import type { LinkedFolder } from "./linked-files"
 import { createStore, get, getMany, setMany } from "idb-keyval"
@@ -26,6 +29,12 @@ export type LibraryDatabase = {
   queue: string[]
   completedLessons: string[]
   reports: ManualReport[]
+  /** Transitions saved for a track pair ("outId>inId"), ranked first. */
+  savedTransitions: Partial<
+    Record<string, { technique: string; savedAt: string }>
+  >
+  /** Your thumbs up / down per style pair and routine ("House|bass"). */
+  transitionRatings: Record<string, number>
   session: {
     A: string
     B: string
@@ -39,6 +48,12 @@ export type LibraryDatabase = {
     mixPace: MixPace
     transitionTechnique: string | null
     recentTransitions: string[]
+    /** Auto-FX amount for automatic transitions. */
+    fxAmount: FXAmount
+    /** Main effect of recent transitions ("none" when dry), oldest first. */
+    recentFX: string[]
+    /** Whole-set plan: energy arc, length and tempo path. */
+    setPlan: SetSettings
     transitionCues: Partial<
       Record<string, { entry: number | null; exit: number | null }>
     >
@@ -60,6 +75,8 @@ export const defaultDatabase: LibraryDatabase = {
   queue: [],
   completedLessons: [],
   reports: [],
+  savedTransitions: {},
+  transitionRatings: {},
   session: {
     A: "edm",
     B: "lift",
@@ -73,6 +90,9 @@ export const defaultDatabase: LibraryDatabase = {
     mixPace: "dj",
     transitionTechnique: null,
     recentTransitions: [],
+    fxAmount: "subtle",
+    recentFX: [],
+    setPlan: defaultSetSettings,
     transitionCues: {},
     libraryTab: "all",
     density: "compact",

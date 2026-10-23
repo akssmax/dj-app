@@ -19,6 +19,8 @@ const snapshot = (): EngineState => ({
   autoStatus: "",
   recording: false,
   lastRecording: null,
+  lastTracklist: null,
+  previewing: false,
   error: null,
 })
 describe("FLX4 pad banks and physical button releases", () => {

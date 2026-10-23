@@ -29,10 +29,13 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Link } from "@tanstack/react-router"
 import {
   harmonicCompatibility,
+  scoreSummary,
   techniqueReadiness,
   transitionChoices,
 } from "@/lib/dj/planner"
-import type { Track, Transition } from "@/lib/dj/types"
+import type { MixIntent, Track, Transition } from "@/lib/dj/types"
+import { describeFX } from "@/lib/dj/auto-fx"
+import { phaseLabel } from "@/lib/dj/set-plan"
 import { formatTime } from "@/lib/dj/tracks"
 import { cueOptions } from "@/lib/dj/cue-suggestions"
 
@@ -52,12 +55,20 @@ export function TransitionPlanner() {
     midi,
     database,
     setMixIntent,
+    setFXAmount,
+    setSetPlan,
     setTransitionTechnique,
     setTransitionCue,
+    automix,
+    engine,
+    lastTransition,
+    rateTransition,
+    saveTransition,
   } = useDJ()
   const { outId, inId, out, incoming, plans, plan, outCue, inCue } =
     useTransitionPlan()
   const inKeyLock = useEngine((current) => current[inId].keyLock)
+  const previewing = useEngine((current) => current.previewing)
   const [tab, setTab] = useState("available")
   const [preparation, setPreparation] = useState<
     ReturnType<typeof techniqueReadiness>[number] | null
@@ -82,25 +93,107 @@ export function TransitionPlanner() {
         <div className="mix-intent">
           <span>Energy goal</span>
           <Select
-            value={database.session.mixIntent}
-            onValueChange={(value) => value && setMixIntent(value)}
+            value={
+              database.session.setPlan.follow
+                ? "set"
+                : database.session.mixIntent
+            }
+            onValueChange={(value) =>
+              value === "set"
+                ? setSetPlan({ follow: true })
+                : value && setMixIntent(value as MixIntent)
+            }
           >
             <SelectTrigger aria-label="Automix energy goal">
               <SelectValue>
-                {database.session.mixIntent === "lift"
-                  ? "Lift the energy"
-                  : database.session.mixIntent === "ease"
-                    ? "Ease the energy"
-                    : "Maintain the groove"}
+                {database.session.setPlan.follow
+                  ? "Follow the set"
+                  : database.session.mixIntent === "lift"
+                    ? "Lift the energy"
+                    : database.session.mixIntent === "ease"
+                      ? "Ease the energy"
+                      : "Maintain the groove"}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="set">Follow the set</SelectItem>
               <SelectItem value="maintain">Maintain the groove</SelectItem>
               <SelectItem value="lift">Lift the energy</SelectItem>
               <SelectItem value="ease">Ease the energy</SelectItem>
             </SelectContent>
           </Select>
         </div>
+        <div className="mix-intent">
+          <span>Auto-FX</span>
+          <Select
+            value={database.session.fxAmount}
+            onValueChange={(value) => value && setFXAmount(value)}
+          >
+            <SelectTrigger aria-label="Automix effects amount">
+              <SelectValue>
+                {fxOptions.find((o) => o.id === database.session.fxAmount)
+                  ?.label ?? "Subtle FX"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {fxOptions.map((option) => (
+                <SelectItem key={option.id} value={option.id}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {lastTransition && (
+          <div
+            className="last-transition"
+            role="group"
+            aria-label="Rate the last transition"
+          >
+            <span>
+              Last mix · <strong>{lastTransition.name}</strong>
+            </span>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="I liked this transition"
+              aria-pressed={lastTransition.rating === 1}
+              title="More like this for this style"
+              onClick={() => rateTransition(1)}
+            >
+              👍
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="I did not like this transition"
+              aria-pressed={lastTransition.rating === -1}
+              title="Less of this for this style"
+              onClick={() => rateTransition(-1)}
+            >
+              👎
+            </Button>
+            <Button
+              variant="ghost"
+              size="xs"
+              disabled={lastTransition.saved}
+              title="Use this routine first when these two tracks meet again"
+              onClick={saveTransition}
+            >
+              {lastTransition.saved ? "Saved" : "Save for this pair"}
+            </Button>
+          </div>
+        )}
+        {database.session.setPlan.follow && automix.set && (
+          <p className="estimate-note set-status" role="status">
+            <Icon name="activity" size={14} />
+            <span>
+              Set · {phaseLabel(automix.set.phase)} · energy{" "}
+              {automix.set.energy.toFixed(1)}
+              {automix.set.bpm ? ` · ${automix.set.bpm} BPM` : ""}
+            </span>
+          </p>
+        )}
         <Tabs
           value={tab}
           onValueChange={(value) => setTab(String(value))}
@@ -134,10 +227,17 @@ export function TransitionPlanner() {
                           ? `${candidate.bars} bars`
                           : "Downbeat cut"}{" "}
                         · Level {candidate.difficulty}
+                        {candidate.keySafe ? " · Key-safe" : ""}
                       </small>
+                      {index < 3 && scoreSummary(candidate) && (
+                        <small className="choice-why">
+                          {scoreSummary(candidate)}
+                        </small>
+                      )}
                     </span>
                     <span className="choice-rank">
-                      {index === 0 ? "TOP" : `#${index + 1}`}
+                      {index === 0 ? "BEST" : `#${index + 1}`} ·{" "}
+                      {candidate.score}
                     </span>
                   </Button>
                 ))}
@@ -181,7 +281,10 @@ export function TransitionPlanner() {
                         Level {item.technique.level} · {item.status}
                       </small>
                     </span>
-                    <Icon name={item.plan ? "check" : "info"} size={16} />
+                    <Icon
+                      name={item.status === "Ready" ? "check" : "info"}
+                      size={16}
+                    />
                   </Button>
                 ))}
               </div>
@@ -294,6 +397,27 @@ export function TransitionPlanner() {
                 . Details in Why & steps.
               </span>
             </p>
+            {!!plan.fx?.length && (
+              <p className="estimate-note auto-fx-note">
+                <Icon name="sparkles" size={14} />
+                <span>Auto-FX: {describeFX(plan.fx)}</span>
+              </p>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="preview-listen"
+              disabled={!engine || out.loading || incoming.loading}
+              title="Render this transition and play it in your headphones (or on the master while both decks are stopped)"
+              onClick={() =>
+                previewing
+                  ? engine?.stopPreview()
+                  : void engine?.previewTransition(outId, plan)
+              }
+            >
+              <Icon name={previewing ? "stop" : "headphones"} size={14} />
+              {previewing ? "Stop preview" : "Listen to preview"}
+            </Button>
           </>
         )}
       </div>
@@ -343,6 +467,20 @@ const energyGoals = [
     hint: "Keep the energy level steady",
   },
   { id: "lift", label: "Lift", arrow: "↗", hint: "Build energy with each mix" },
+] as const
+
+const fxOptions = [
+  { id: "off", label: "No FX", hint: "Automix transitions stay dry" },
+  {
+    id: "subtle",
+    label: "Subtle FX",
+    hint: "About one transition in three gets an effect: echo tails, filter builds, reverb washes",
+  },
+  {
+    id: "expressive",
+    label: "Expressive FX",
+    hint: "About two in three, with risers, loop rolls, brakes, gates and flangers",
+  },
 ] as const
 
 const paceOptions = [
@@ -408,6 +546,8 @@ export function TransitionCoach() {
     setTransitionTechnique,
     setMixIntent,
     setMixPace,
+    setFXAmount,
+    setSetPlan,
     tracks,
     coachOpen,
     setCoachOpen,
@@ -588,12 +728,25 @@ export function TransitionCoach() {
           role="radiogroup"
           aria-label="Automix energy goal"
         >
+          <button
+            type="button"
+            role="radio"
+            aria-checked={database.session.setPlan.follow}
+            title="Follow the set's energy arc: warm-up, build, peak and close"
+            onClick={() => setSetPlan({ follow: true })}
+          >
+            <span aria-hidden="true">∿</span>
+            Set
+          </button>
           {energyGoals.map((goal) => (
             <button
               key={goal.id}
               type="button"
               role="radio"
-              aria-checked={database.session.mixIntent === goal.id}
+              aria-checked={
+                !database.session.setPlan.follow &&
+                database.session.mixIntent === goal.id
+              }
               title={goal.hint}
               onClick={() => setMixIntent(goal.id)}
             >
@@ -612,7 +765,10 @@ export function TransitionCoach() {
               key={option.id}
               type="button"
               role="radio"
-              aria-checked={database.session.mixPace === option.id}
+              aria-checked={
+                !database.session.setPlan.follow &&
+                database.session.mixPace === option.id
+              }
               title={option.hint}
               onClick={() => setMixPace(option.id)}
             >
@@ -620,31 +776,31 @@ export function TransitionCoach() {
             </button>
           ))}
         </div>
-        <label className="automix-picker">
-          <span>Style{state.auto ? " · next mix" : ""}</span>
+        <div
+          className="automix-fx"
+          title={
+            fxOptions.find((o) => o.id === database.session.fxAmount)?.hint
+          }
+        >
           <Select
-            value={database.session.transitionTechnique ?? "auto"}
-            onValueChange={(value) =>
-              value && setTransitionTechnique(value === "auto" ? null : value)
-            }
+            value={database.session.fxAmount}
+            onValueChange={(value) => value && setFXAmount(value)}
           >
-            <SelectTrigger aria-label="Coach transition technique">
+            <SelectTrigger aria-label="Automix effects amount">
               <SelectValue>
-                {transitionChoices.find(
-                  (choice) => choice.id === database.session.transitionTechnique
-                )?.name ?? "Auto pick"}
+                {fxOptions.find((o) => o.id === database.session.fxAmount)
+                  ?.label ?? "Subtle FX"}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">Auto pick · best fit</SelectItem>
-              {transitionChoices.map((candidate) => (
-                <SelectItem key={candidate.id} value={candidate.id}>
-                  {candidate.name}
+              {fxOptions.map((option) => (
+                <SelectItem key={option.id} value={option.id}>
+                  {option.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-        </label>
+        </div>
         <div className="compact-coach-actions">
           <Button
             variant="ghost"
@@ -673,7 +829,8 @@ export function TransitionCoach() {
               )
             }
           >
-            Go to zone
+            <Icon name="target" size={14} />
+            <span className="zone-label">Go to zone</span>
           </Button>
           {!midi.connected && (
             <Button
@@ -800,11 +957,40 @@ export function TransitionCoach() {
         </div>
         <div className="automix-bridge">
           <div className="automix-bridge-head">
-            <strong>
-              {(state.auto && state.autoPlan?.name) ||
-                plan?.name ||
-                "No transition yet"}
-            </strong>
+            {/* The routine name doubles as the Style picker. */}
+            <Select
+              value={database.session.transitionTechnique ?? "auto"}
+              onValueChange={(value) =>
+                value && setTransitionTechnique(value === "auto" ? null : value)
+              }
+            >
+              <SelectTrigger
+                className="automix-style"
+                aria-label={`Transition style${state.auto ? " for the next mix" : ""}`}
+                title={
+                  state.auto
+                    ? "Choose the routine for the next mix"
+                    : "Choose the routine, or let Auto pick the best fit"
+                }
+              >
+                <SelectValue>
+                  <strong>
+                    {(state.auto && state.autoPlan?.name) ||
+                      plan?.name ||
+                      "No transition yet"}
+                  </strong>
+                  {!database.session.transitionTechnique && <small>Auto</small>}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">Auto pick · best fit</SelectItem>
+                {transitionChoices.map((candidate) => (
+                  <SelectItem key={candidate.id} value={candidate.id}>
+                    {candidate.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <span>{countdown}</span>
           </div>
           <MixTags plan={state.auto ? state.autoPlan : plan} />

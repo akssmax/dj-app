@@ -1,3 +1,4 @@
+import type { MixIntent } from "@/lib/dj/types"
 import { useMemo, useRef, useState } from "react"
 import type { ReactNode } from "react"
 import { Link } from "@tanstack/react-router"
@@ -5,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { SetPlanner } from "./set-planner"
 import {
   Select,
   SelectContent,
@@ -60,6 +62,14 @@ export function NextTrackSuggestions() {
           technique: database.session.transitionTechnique,
           transitionCues: database.session.transitionCues,
           played,
+          fx: {
+            amount: database.session.fxAmount,
+            recent: database.session.recentFX,
+          },
+          taste: {
+            saved: database.savedTransitions,
+            ratings: database.transitionRatings,
+          },
         }
       ),
     [
@@ -73,6 +83,10 @@ export function NextTrackSuggestions() {
       database.cueLabels,
       database.session.transitionTechnique,
       database.session.transitionCues,
+      database.session.fxAmount,
+      database.session.recentFX,
+      database.savedTransitions,
+      database.transitionRatings,
       played,
       position,
     ]
@@ -122,7 +136,9 @@ export function NextTrackSuggestions() {
                 <strong>{recommendation.track.title}</strong>
                 <span>{recommendation.track.artist}</span>
               </div>
-              <Badge variant="secondary">{recommendation.plan.name}</Badge>
+              <Badge variant="secondary">
+                {recommendation.plan.name} · {recommendation.plan.score}
+              </Badge>
             </div>
             <p>{recommendation.reason}</p>
             <div className="coach-row-actions">
@@ -270,6 +286,7 @@ export function TransitionExplorer({
     setTransitionPreview,
     setLayout,
     setMixIntent,
+    setSetPlan,
   } = useDJ()
   const { outId, inId, out, incoming, plan, outCue, inCue } =
     useTransitionPlan()
@@ -367,6 +384,7 @@ export function TransitionExplorer({
           </TabsTrigger>
           <TabsTrigger value="cues">Cue pairs</TabsTrigger>
           <TabsTrigger value="next">Next tracks</TabsTrigger>
+          <TabsTrigger value="set">Set</TabsTrigger>
           <TabsTrigger value="all">
             Techniques <span className="coach-tab-count">28</span>
           </TabsTrigger>
@@ -378,19 +396,30 @@ export function TransitionExplorer({
               <div className="explorer-intent">
                 <span>Energy goal</span>
                 <Select
-                  value={database.session.mixIntent}
-                  onValueChange={(value) => value && setMixIntent(value)}
+                  value={
+                    database.session.setPlan.follow
+                      ? "set"
+                      : database.session.mixIntent
+                  }
+                  onValueChange={(value) =>
+                    value === "set"
+                      ? setSetPlan({ follow: true })
+                      : value && setMixIntent(value as MixIntent)
+                  }
                 >
                   <SelectTrigger aria-label="Coach energy goal">
                     <SelectValue>
-                      {database.session.mixIntent === "lift"
-                        ? "Lift energy"
-                        : database.session.mixIntent === "ease"
-                          ? "Ease energy"
-                          : "Maintain groove"}
+                      {database.session.setPlan.follow
+                        ? "Follow the set"
+                        : database.session.mixIntent === "lift"
+                          ? "Lift energy"
+                          : database.session.mixIntent === "ease"
+                            ? "Ease energy"
+                            : "Maintain groove"}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="set">Follow the set</SelectItem>
                     <SelectItem value="maintain">Maintain groove</SelectItem>
                     <SelectItem value="lift">Lift energy</SelectItem>
                     <SelectItem value="ease">Ease energy</SelectItem>
@@ -650,6 +679,9 @@ export function TransitionExplorer({
           </TabsContent>
           <TabsContent value="next">
             <NextTrackSuggestions />
+          </TabsContent>
+          <TabsContent value="set">
+            <SetPlanner />
           </TabsContent>
           <TabsContent value="all">
             <div className="explorer-catalog">

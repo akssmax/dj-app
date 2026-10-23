@@ -1,6 +1,14 @@
+import type { FXAmount } from "./auto-fx"
+import { setFit } from "./set-plan"
+import type { ArcPoint } from "./set-plan"
 import type { LibraryDatabase } from "./storage"
 import type { Track, MixIntent, MixPace } from "./types"
-import { harmonicCompatibility, planTransitions } from "./planner"
+import {
+  findPlan,
+  harmonicCompatibility,
+  pairKey,
+  planTransitions,
+} from "./planner"
 import {
   discoverTransitions,
   cuePairPlan,
@@ -25,6 +33,59 @@ type RecommendationOptions = {
   /** Score how well each candidate leads into the rest of the pool. */
   lookahead?: boolean
   pace?: MixPace
+  /** Auto-FX amount and recent effects, passed to transition planning. */
+  fx?: { amount: FXAmount; recent: string[] }
+  /**
+   * Mixing a whole set: targets now and for the next tracks, what has
+   * played (oldest first, ending with the outgoing track) and the routines
+   * used in the current part of the set.
+   */
+  /** Saved pair transitions and your ratings by style pair and routine. */
+  taste?: {
+    saved: Partial<Record<string, { technique: string }>>
+    ratings: Record<string, number>
+  }
+  set?: {
+    now: ArcPoint
+    ahead: ArcPoint[]
+    history: Track[]
+    used: string[]
+  }
+}
+
+/**
+ * Best path of follow-ups from a track, scored against the set's targets
+ * for each next slot: cheap fits only, top five per step.
+ */
+function bestPath(
+  from: Track,
+  pool: Track[],
+  targets: ArcPoint[],
+  history: Track[]
+): { value: number; path: Track[] } {
+  if (!targets.length) return { value: 0, path: [] }
+  const target = targets[0]
+  const used = new Set([from.id, ...history.map((t) => t.id)])
+  const options = pool
+    .filter((track) => !used.has(track.id))
+    .map((track) => ({
+      track,
+      value:
+        followFit(from, track, target.intent) +
+        setFit(track, target, [...history, from]).score * 0.5,
+    }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 5)
+  let best = { value: -Infinity, path: [] as Track[] }
+  for (const option of options) {
+    const rest = bestPath(option.track, pool, targets.slice(1), [
+      ...history,
+      from,
+    ])
+    const value = option.value + rest.value * 0.6
+    if (value > best.value) best = { value, path: [option.track, ...rest.path] }
+  }
+  return Number.isFinite(best.value) ? best : { value: 0, path: [] }
 }
 
 /**
@@ -130,9 +191,17 @@ export function recommendTracks(
         outCue,
         inCue,
         pace: options.pace,
+        fx: options.fx,
+        setPhase: options.set
+          ? { phase: options.set.now.phase, used: options.set.used }
+          : undefined,
+        taste: options.taste && {
+          saved: options.taste.saved[pairKey(out.id, track.id)]?.technique,
+          ratings: options.taste.ratings,
+        },
       })
       const plan = options.technique
-        ? alternatives.find((candidate) => candidate.id === options.technique)
+        ? findPlan(alternatives, options.technique)
         : alternatives.at(0)
       if (!plan) return []
       const harmonic = harmonicCompatibility(out.camelot, track.camelot)
@@ -152,13 +221,17 @@ export function recommendTracks(
         (!track.analysis ? 4 : 0) +
         (relation && !plan.beatmatch ? 3 : 0) -
         (sameArtist(out, track) ? 6 : 0)
+      const fit = options.set
+        ? setFit(track, options.set.now, options.set.history)
+        : null
       return [
         {
           track,
           plan,
           alternatives,
-          score,
-          reason: `${gap === null ? "Tempo unverified" : plan.beatmatch ? `${gap.toFixed(1)} BPM gap · beatmatch fits` : `${gap.toFixed(1)} BPM gap · ${plan.name}`}${relation ? " · half/double-time relationship (manual counting)" : ""}${out.camelot && track.camelot ? ` · ${harmonic >= 0.8 ? "compatible source keys" : "favor less melody overlap"}` : " · key unverified"} · ${delta > 1 ? "energy rises" : delta < -1 ? "energy eases" : "similar energy"}`,
+          score: score + (fit?.score ?? 0),
+          path: [] as Track[],
+          reason: `${fit?.notes.length ? `${fit.notes.join(" · ")} · ` : ""}${gap === null ? "Tempo unverified" : plan.beatmatch ? `${gap.toFixed(1)} BPM gap · beatmatch fits` : `${gap.toFixed(1)} BPM gap · ${plan.name}`}${relation ? " · half/double-time relationship (manual counting)" : ""}${out.camelot && track.camelot ? ` · ${harmonic >= 0.8 ? "compatible source keys" : "favor less melody overlap"}` : " · key unverified"} · ${delta > 1 ? "energy rises" : delta < -1 ? "energy eases" : "similar energy"}`,
         },
       ]
     })
@@ -169,6 +242,21 @@ export function recommendTracks(
       // Lookahead: among the strongest picks, prefer the one that leaves a
       // good next move instead of painting the set into a corner.
       if (!options.lookahead || index >= 6) return recommendation
+      // A set plan looks two or three tracks ahead against the arc.
+      if (options.set?.ahead.length) {
+        const { value, path } = bestPath(
+          recommendation.track,
+          ranked.map((other) => other.track),
+          options.set.ahead,
+          options.set.history
+        )
+        return {
+          ...recommendation,
+          score: recommendation.score + value * 0.4,
+          path,
+          reason: `${recommendation.reason} · ${value >= 14 ? "strong" : value >= 4 ? "workable" : "few"} follow-ups`,
+        }
+      }
       const rest = ranked
         .filter((other) => other.track.id !== recommendation.track.id)
         .map((other) => other.track)
@@ -197,6 +285,8 @@ export function recommendTracks(
         inLabels: options.labels?.[recommendation.track.id],
         outCue: options.transitionCues?.[out.id]?.exit ?? null,
         inCue: options.transitionCues?.[recommendation.track.id]?.entry ?? null,
+        pace: options.pace,
+        fx: options.fx,
       }
       const choices = discoverTransitions(
         out,
@@ -204,7 +294,10 @@ export function recommendTracks(
         explorerOptions
       )
         .filter(
-          (choice) => !options.technique || choice.plan.id === options.technique
+          (choice) =>
+            !options.technique ||
+            choice.plan.id === options.technique ||
+            (options.technique === "harmonic" && !!choice.plan.keySafe)
         )
         .map((choice) => ({
           choice,
@@ -226,7 +319,12 @@ export function recommendTracks(
           } => !!choice.pair
         )
         .sort((a, b) => b.pair.score - a.pair.score)
-      const best = choices.at(0)
+      // Refine the chosen routine's cue points; a routine placed by the
+      // arrangement (drop swap, double drop …) keeps its own points.
+      const best =
+        choices.find(
+          (choice) => choice.choice.plan.id === recommendation.plan.id
+        ) ?? (options.technique ? choices.at(0) : undefined)
       const plan = best
         ? (cuePairPlan(out, recommendation.track, best.pair, explorerOptions) ??
           recommendation.plan)
