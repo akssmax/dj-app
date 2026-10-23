@@ -43,11 +43,14 @@ await page.waitForFunction(
 )
 await page.waitForTimeout(1500)
 
-// Clip the decks with some studio background around them so the cards'
-// rounded edges are not cut off. Neighbouring sections sit ~14px above and
-// below, so the vertical margin stays smaller.
-const PAD_X = 20
-const PAD_Y = 10
+// Clip the decks with an equal margin of studio background on every side so
+// the cards' rounded edges are not cut off. Neighbouring sections sit closer
+// than that, so push them away while capturing.
+const PAD = 20
+await page.addStyleTag({
+  content: `section.performance-grid { margin-block: ${PAD + 8}px !important; }`,
+})
+await page.waitForTimeout(300)
 async function shootGrid(path) {
   const box = await page.locator("section.performance-grid").boundingBox()
   if (!box) throw new Error("Decks not found")
@@ -57,10 +60,10 @@ async function shootGrid(path) {
     quality: 82,
     fullPage: true,
     clip: {
-      x: box.x - PAD_X,
-      y: box.y + (await page.evaluate(() => scrollY)) - PAD_Y,
-      width: box.width + PAD_X * 2,
-      height: box.height + PAD_Y * 2,
+      x: box.x - PAD,
+      y: box.y + (await page.evaluate(() => scrollY)) - PAD,
+      width: box.width + PAD * 2,
+      height: box.height + PAD * 2,
     },
   })
 }
