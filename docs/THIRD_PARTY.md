@@ -8,3 +8,8 @@ Cue uses the unmodified `@soundtouchjs/audio-worklet` 2.1.1 processor bundle, in
 - License copy: `public/licenses/soundtouch-MPL-2.0.txt` (served at `/licenses/soundtouch-MPL-2.0.txt`).
 
 The processor asset is loaded locally from the installed package. Cue's MIDI decoder, continuous scratch reader, routing, UI and controller presets are separate app code.
+
+# Landing page assets
+
+- **Bricolage Grotesque** (variable, Latin subset) by Mathieu Triay, from `@fontsource-variable/bricolage-grotesque` 5.3.0. SIL Open Font License 1.1. File: `public/fonts/bricolage/`, licence copy `public/fonts/bricolage/OFL.txt`.
+- **GradientASCII** WebGL component adapted from [React Bits](https://reactbits.dev) (MIT + Commons Clause licence) (`src/components/marketing/gradient-ascii.tsx`). Ported to TypeScript, with a frame-rate cap and a lighter render path for the landing page.

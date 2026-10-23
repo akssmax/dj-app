@@ -856,16 +856,10 @@ html :is(.app-shell .sidebar, .mobile-navigation) .brand-symbol {
   place-items: center;
   width: 34px;
   height: 34px;
-  border: 0;
+  border: 1px solid var(--border);
   border-radius: 11px;
-  font-size: 18px;
-  color: var(--primary-foreground);
-  background: linear-gradient(
-    150deg,
-    color-mix(in srgb, #fff 25%, var(--primary)),
-    var(--primary)
-  );
-  box-shadow: 0 6px 18px -8px var(--primary);
+  background: var(--screen);
+  box-shadow: 0 6px 18px -10px var(--primary);
 }
 html :is(.app-shell .sidebar, .mobile-navigation) .workspace-label,
 html :is(.app-shell .sidebar, .mobile-navigation) .sidebar-section-label {
@@ -885,7 +879,9 @@ html :is(.app-shell .sidebar, .mobile-navigation) .workspace-label {
   margin-inline-start: auto;
   padding: 0 6px;
   border-radius: 6px;
-  background: var(--screen);
+  background: color-mix(in srgb, var(--orange) 14%, var(--screen));
+  color: var(--orange);
+  white-space: nowrap;
 }
 html
   :is(.app-shell .sidebar, .mobile-navigation)
@@ -1386,7 +1382,17 @@ html .library-panel .folder-browser {
     color-mix(in srgb, var(--border) 55%, transparent);
 }
 html .library-panel .section-heading {
+  flex-wrap: wrap;
+  gap: 10px;
   border-bottom: 0;
+}
+html .library-panel .section-heading h2 {
+  white-space: nowrap;
+}
+/* The library sizes itself by its own width: it is narrow beside the decks
+   or in a split window even when the window itself is wide. */
+html .library-panel {
+  container: library / inline-size;
 }
 .library-import-actions {
   display: flex;
@@ -1690,6 +1696,64 @@ html .library-browser .energy-rating [data-slot="button"] {
     max-height: none;
     overflow-x: auto;
     padding-bottom: 6px;
+    border: 0;
+    scrollbar-width: none;
+  }
+  html
+    .library-panel
+    .folder-browser
+    > :is(.folder-browser-label, .folder-empty) {
+    display: none;
+  }
+  html .library-panel .folder-browser [data-slot="button"] {
+    flex: none;
+    width: auto;
+    min-height: 34px;
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: var(--tile);
+  }
+  html
+    .library-panel
+    .folder-browser
+    [data-slot="button"][aria-current="page"] {
+    color: var(--primary-foreground);
+    background: var(--primary);
+  }
+}
+
+/* Narrow library panel: actions on their own row, collections as chips
+   above the track list instead of a side column. */
+@container library (max-width: 700px) {
+  html .library-panel .library-import-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+  html
+    .library-panel
+    .library-import-actions
+    > [data-slot="button"]:first-child {
+    grid-column: 1 / -1;
+  }
+  html .library-panel .library-import-actions > * {
+    min-width: 0;
+  }
+  html .library-panel .library-import-actions [data-slot="button"] {
+    width: 100%;
+    justify-content: center;
+  }
+  html .library-panel .library-browser {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  html .library-panel .folder-browser {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    max-height: none;
+    overflow-x: auto;
+    padding: 0 0 6px;
     border: 0;
     scrollbar-width: none;
   }

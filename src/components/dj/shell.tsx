@@ -28,6 +28,8 @@ import { AppearanceSettings, ThemeSelect } from "./appearance"
 import type { ReactNode } from "react"
 import type { StudioLayout } from "@/lib/dj/themes"
 import { isLightTheme } from "@/lib/dj/themes"
+import { CueMark } from "@/components/brand/mark"
+import { APP_RELEASE, APP_VERSION } from "@/lib/version"
 
 function MasterMeter() {
   const value = useEngine((state) => Math.max(state.A.meter, state.B.meter))
@@ -59,6 +61,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     state = useEngine((s) => ({
       recording: s.recording,
       lastRecording: s.lastRecording,
+      lastTracklist: s.lastTracklist,
       playing: s.A.playing || s.B.playing,
       error: s.error,
     }))
@@ -127,14 +130,21 @@ export function AppShell({ children }: { children: ReactNode }) {
   const sidebarContent = (
     <>
       <Link className="brand" to="/" aria-label="Cue studio">
-        <span className="brand-symbol">c</span>
-        <span>
-          cue<span className="brand-dot">.</span>
+        <span className="brand-symbol">
+          <CueMark size={24} />
         </span>
+        <span>cue</span>
       </Link>
       <div className="workspace-label">
         <span className="status-dot connected" />
-        YOUR WORKSPACE<span className="workspace-badge">BETA</span>
+        WORKSPACE
+        <Link
+          to="/roadmap"
+          className="workspace-badge"
+          title={`Cue ${APP_VERSION} · see the roadmap`}
+        >
+          {APP_RELEASE.toUpperCase()}
+        </Link>
       </div>
       <nav className="main-nav">
         <Button
@@ -175,6 +185,18 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Badge className="new-badge" variant="secondary">
             NEW
           </Badge>
+        </Button>
+        <Button
+          variant="ghost"
+          className="nav-item"
+          nativeButton={false}
+          aria-label="Roadmap"
+          title={sidebarCollapsed ? "Roadmap" : undefined}
+          onClick={() => setMobileNavOpen(false)}
+          render={<Link to="/roadmap" />}
+        >
+          <Icon name="sparkles" />
+          <span className="nav-label">Roadmap</span>
         </Button>
       </nav>
       <div className="sidebar-section-label">YOUR COLLECTION</div>
@@ -394,6 +416,40 @@ export function AppShell({ children }: { children: ReactNode }) {
                       <span className="btn-label">Download mix</span>
                     </Button>
                   )}
+                  {state.lastTracklist && (
+                    <Button
+                      variant="outline"
+                      nativeButton={false}
+                      aria-label="Download tracklist"
+                      title="Download the tracklist as text"
+                      render={
+                        <a
+                          href={state.lastTracklist.txt}
+                          download={`${state.lastTracklist.name}-tracklist.txt`}
+                        />
+                      }
+                    >
+                      <Icon name="library" size={15} />
+                      <span className="btn-label">Tracklist</span>
+                    </Button>
+                  )}
+                  {state.lastTracklist && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      nativeButton={false}
+                      aria-label="Download CUE sheet"
+                      title="CUE sheet for the recording, for players and uploads that read chapters"
+                      render={
+                        <a
+                          href={state.lastTracklist.cue}
+                          download={`${state.lastTracklist.name}.cue`}
+                        />
+                      }
+                    >
+                      .cue
+                    </Button>
+                  )}
                 </div>
                 <Button
                   className="mobile-learn"
@@ -490,7 +546,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 >
                   Track credits <Icon name="info" size={12} />
                 </Button>
-                <span>cue v0.1</span>
+                <span>cue {APP_RELEASE.toLowerCase()}</span>
               </div>
             </footer>
           </div>

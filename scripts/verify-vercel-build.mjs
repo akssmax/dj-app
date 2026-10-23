@@ -13,7 +13,7 @@ const { default: server } = await import(
   new URL("functions/__server.func/index.mjs", output)
 )
 
-for (const path of ["/", "/learn"]) {
+for (const path of ["/", "/learn", "/home", "/roadmap"]) {
   const response = await server.fetch(
     new Request(`https://dj-app-kappa.vercel.app${path}`)
   )
