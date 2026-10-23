@@ -1138,23 +1138,31 @@ const MiniWaveform = memo(function WaveformView({ track }: { track: Track }) {
     const element = canvas.current,
       context = element?.getContext("2d")
     if (!element || !context) return
-    fitCanvas(element)
-    context.clearRect(0, 0, element.width, element.height)
-    drawWave(
-      context,
-      waveColumns(
-        analysis.peaks,
-        analysis.bands,
-        track.duration,
+    const draw = () => {
+      fitCanvas(element)
+      context.clearRect(0, 0, element.width, element.height)
+      drawWave(
+        context,
+        waveColumns(
+          analysis.peaks,
+          analysis.bands,
+          track.duration,
+          0,
+          track.duration,
+          element.width
+        ),
+        readPalette(element),
+        !!analysis.bands,
         0,
-        track.duration,
-        element.width
-      ),
-      readPalette(element),
-      !!analysis.bands,
-      0,
-      waveStyle
-    )
+        waveStyle
+      )
+    }
+    draw()
+    // The row can render before the library has its size (bundled demo
+    // analysis is ready at startup), so redraw once the cell is laid out.
+    const observer = new ResizeObserver(draw)
+    observer.observe(element)
+    return () => observer.disconnect()
   }, [analysis, track.duration, theme, waveStyle])
   return (
     <canvas
