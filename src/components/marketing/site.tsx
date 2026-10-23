@@ -127,18 +127,18 @@ function SiteFooter({ palette }: { palette: readonly [string, string] }) {
           <nav aria-label="Credits">
             <h3>Credits</h3>
             <a
-              href="https://incompetech.com/music/royalty-free/"
+              href="https://pixabay.com/music/"
               target="_blank"
               rel="noreferrer"
             >
-              Music: Kevin MacLeod
+              Music: Pixabay
             </a>
             <a
-              href="https://creativecommons.org/licenses/by/3.0/"
+              href="https://pixabay.com/service/license-summary/"
               target="_blank"
               rel="noreferrer"
             >
-              CC BY 3.0
+              Pixabay Content License
             </a>
             <a href="/fonts/bricolage/OFL.txt">Font licence</a>
           </nav>

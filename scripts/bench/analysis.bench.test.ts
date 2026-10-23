@@ -3,27 +3,18 @@
  *
  * - Synthetic tracks (scripts/bench/synth.ts): exact tempo, beats,
  *   downbeats, key and section changes.
- * - The five bundled Creative Commons tracks: published tempo only.
+ * - The ten bundled Pixabay demo tracks: tempo only (measured by this analyzer).
  * - Optional: set BENCH_AUDIO_DIR to a GiantSteps-style folder
  *   (audio/*.mp3, annotations/tempo/*.bpm, annotations/key/*.key). Those
  *   previews are copyrighted, so they are never committed.
  */
 import { join, basename } from "node:path"
 import { it } from "vitest"
-import { MPEGDecoder } from "mpg123-decoder"
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs"
-import * as ort from "onnxruntime-web"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { analyzeAudio, analyzeTrack } from "../../src/lib/dj/analyze"
-import type { BeatModelRun } from "../../src/lib/dj/beat-model"
-import { MODELS } from "../../src/lib/dj/models"
 import { demoTracks } from "../../src/lib/dj/tracks"
 import { benchSpecs, camelotOf, synthTrack } from "./synth"
+import { beatModel, decodeMp3 } from "./node-audio"
 import { fMeasure, keyScore, mean, predictedGrid, tempoScore } from "./metrics"
 
 type Row = {
@@ -35,16 +26,6 @@ type Row = {
   boundaryF?: number
   seconds: number
   detail?: string
-}
-
-async function decodeMp3(path: string) {
-  const decoder = new MPEGDecoder()
-  await decoder.ready
-  const { channelData, sampleRate } = decoder.decode(
-    new Uint8Array(readFileSync(path))
-  )
-  decoder.free()
-  return { channels: channelData, sampleRate }
 }
 
 /** GiantSteps key files say e.g. "A minor" or "Eb major". */
@@ -59,34 +40,6 @@ function camelotFromText(text: string) {
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`
-
-/** The beat model, cached under scripts/bench/.cache (git-ignored). */
-async function beatModel(): Promise<BeatModelRun | undefined> {
-  if (process.env.BENCH_MODEL === "off") return undefined
-  const dir = join("scripts", "bench", ".cache"),
-    file = join(dir, `${MODELS.beats.id}.onnx`)
-  if (!existsSync(file)) {
-    mkdirSync(dir, { recursive: true })
-    const response = await fetch(MODELS.beats.url)
-    writeFileSync(file, new Uint8Array(await response.arrayBuffer()))
-  }
-  const session = await ort.InferenceSession.create(
-    new Uint8Array(readFileSync(file))
-  )
-  return async (spect, frames) => {
-    const out = await session.run({
-      [session.inputNames[0]]: new ort.Tensor("float32", spect, [
-        1,
-        frames,
-        128,
-      ]),
-    })
-    return {
-      beat: out.beat.data as Float32Array,
-      downbeat: out.downbeat.data as Float32Array,
-    }
-  }
-}
 
 it("analysis accuracy", { timeout: 1_800_000 }, async () => {
   const rows: Row[] = []

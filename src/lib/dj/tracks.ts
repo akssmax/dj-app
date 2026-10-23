@@ -8,7 +8,7 @@ const pixabay = (slug: string, user: string) => ({
 })
 
 // Free under the Pixabay Content License, none registered with Content ID.
-// BPM values are measured with analyzeAudio. Keys and energy are measured locally.
+// BPM values come from public/analysis/demo.json (`pnpm analyze:demo`).
 export const demoTracks: Track[] = [
   {
     id: "club",
@@ -40,9 +40,12 @@ export const demoTracks: Track[] = [
     artist: "Leonell Cassio",
     genre: "Future Bass",
     url: "/audio/blackest-bouquet.mp3",
-    credit: pixabay("future-bass-leonell-cassio-the-blackest-bouquet-118766", "leonellcassio-2264996"),
+    credit: pixabay(
+      "future-bass-leonell-cassio-the-blackest-bouquet-118766",
+      "leonellcassio-2264996"
+    ),
     duration: 221,
-    bpm: 128,
+    bpm: 127,
     color: "purple",
     source: "demo",
   },
@@ -88,7 +91,10 @@ export const demoTracks: Track[] = [
     artist: "Leonell Cassio",
     genre: "Future Bass",
     url: "/audio/chapter-two.mp3",
-    credit: pixabay("future-bass-leonell-cassio-chapter-two-ft-carrie-114909", "leonellcassio-2264996"),
+    credit: pixabay(
+      "future-bass-leonell-cassio-chapter-two-ft-carrie-114909",
+      "leonellcassio-2264996"
+    ),
     duration: 240,
     bpm: 111,
     color: "orange",
@@ -102,7 +108,7 @@ export const demoTracks: Track[] = [
     url: "/audio/amalgam.mp3",
     credit: pixabay("future-bass-amalgam-217007", "rockot-1947599"),
     duration: 254,
-    bpm: 110,
+    bpm: 109.37,
     color: "blue",
     source: "demo",
   },
@@ -114,7 +120,7 @@ export const demoTracks: Track[] = [
     url: "/audio/town.mp3",
     credit: pixabay("electronic-town-10169", "becorbal-12069858"),
     duration: 183,
-    bpm: 100,
+    bpm: 98.35,
     color: "purple",
     source: "demo",
   },
@@ -124,9 +130,12 @@ export const demoTracks: Track[] = [
     artist: "Leonell Cassio",
     genre: "Future Bass",
     url: "/audio/paranormal-is-real.mp3",
-    credit: pixabay("future-bass-leonell-cassio-the-paranormal-is-real-ft-carrie-163742", "leonellcassio-2264996"),
+    credit: pixabay(
+      "future-bass-leonell-cassio-the-paranormal-is-real-ft-carrie-163742",
+      "leonellcassio-2264996"
+    ),
     duration: 168,
-    bpm: 180,
+    bpm: 140.86,
     color: "pink",
     source: "demo",
   },

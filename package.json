@@ -13,7 +13,8 @@
     "check": "prettier --check \"**/*.{ts,tsx,js,jsx}\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "bench:analysis": "vitest run --config vitest.bench.config.ts"
+    "bench:analysis": "vitest run --config vitest.bench.config.ts",
+    "analyze:demo": "vitest run --config vitest.demo.config.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

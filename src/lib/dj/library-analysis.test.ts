@@ -4,7 +4,10 @@ import {
   linkedFingerprint,
   mergeLibraryAnalysis,
   mergeScannedTracks,
+  withDemoAnalysis,
 } from "./library-analysis"
+import { demoTracks } from "./tracks"
+import { ANALYSIS_VERSION } from "./structure"
 import type { Track, Analysis } from "./types"
 
 const analysis: Analysis = {
@@ -158,5 +161,68 @@ describe("background library analysis", () => {
       analyzeLibraryTrack(denied, new AbortController().signal)
     ).rejects.toThrow("Reconnect")
     expect(denied.linkedFile!.handle.getFile).not.toHaveBeenCalled()
+  })
+})
+
+describe("bundled demo analysis", () => {
+  const current: Analysis = {
+    ...analysis,
+    bpm: 128,
+    vocals: [0, 0],
+    analysisVersion: ANALYSIS_VERSION,
+  }
+  const bundle = Object.fromEntries(
+    demoTracks.map((demo) => [demo.id, { duration: 150, analysis: current }])
+  )
+  const serve = (body: unknown, ok = true) => {
+    const fetch = vi.fn(async () => ({ ok, json: async () => body }))
+    vi.stubGlobal("fetch", fetch)
+    return fetch
+  }
+
+  it("analyzes every demo track for a new visitor", async () => {
+    serve(bundle)
+    const tracks = await withDemoAnalysis([])
+    expect(tracks.map((t) => t.id)).toEqual(demoTracks.map((t) => t.id))
+    expect(tracks[0]).toMatchObject({
+      analysis: current,
+      duration: 150,
+      camelot: "8A",
+      energy: 6,
+    })
+  })
+
+  it("keeps saved analysis and hand-set keys", async () => {
+    const [first, second] = demoTracks
+    const saved = { ...first, analysis: { ...current, bpm: 126 } }
+    const keyed = { ...second, keyOverride: "5A", camelot: "5A" }
+    serve(bundle)
+    const tracks = await withDemoAnalysis([saved, keyed])
+    expect(tracks.find((t) => t.id === first.id)).toBe(saved)
+    expect(tracks.find((t) => t.id === second.id)).toMatchObject({
+      analysis: current,
+      camelot: "5A",
+    })
+  })
+
+  it("skips the download when nothing is missing", async () => {
+    const fetch = serve(bundle)
+    const analyzed = demoTracks.map((demo) => ({ ...demo, analysis: current }))
+    expect(await withDemoAnalysis(analyzed)).toBe(analyzed)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it("falls back to analyzing when the bundle is missing or outdated", async () => {
+    serve({}, false)
+    expect(await withDemoAnalysis([])).toEqual([])
+    serve(
+      Object.fromEntries(
+        demoTracks.map((demo) => [
+          demo.id,
+          { duration: 150, analysis: { ...current, analysisVersion: 0 } },
+        ])
+      )
+    )
+    expect(await withDemoAnalysis([])).toEqual([])
   })
 })

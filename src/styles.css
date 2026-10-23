@@ -2153,7 +2153,7 @@ a,
   line-height: 1.8;
   color: var(--muted-foreground);
 }
-.credits-dialog a {
+.credits-dialog a:not([data-slot="button"]) {
   color: var(--lime);
   text-decoration: underline;
 }

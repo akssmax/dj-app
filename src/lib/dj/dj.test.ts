@@ -54,6 +54,8 @@ describe("analysis refresh", () => {
 
 const analyzed: Track = {
   ...demoTracks[0],
+  // A full-length club track, independent of which demo music is bundled.
+  duration: 366,
   analysis: {
     peaks: [0.2, 0.4],
     bands: {

@@ -108,7 +108,7 @@ node scripts/verify-vercel-build.mjs
 
 ## Credits and licenses
 
-Bundled demo music is by Kevin MacLeod ([incompetech.com](https://incompetech.com/music/royalty-free/)), licensed [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/); details are in [docs/AUDIO_CREDITS.md](docs/AUDIO_CREDITS.md). Third-party code and model licenses (onnxruntime-web, Beat This!, htdemucs, SoundTouch and others) are listed in [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
+Bundled demo music is from [Pixabay Music](https://pixabay.com/music/), free under the [Pixabay Content License](https://pixabay.com/service/license-summary/); details are in [docs/AUDIO_CREDITS.md](docs/AUDIO_CREDITS.md). Third-party code and model licenses (onnxruntime-web, Beat This!, htdemucs, SoundTouch and others) are listed in [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
 
 rekordbox, Serato, Traktor, djay, VirtualDJ and Beatport are trademarks of their owners. Cue is not affiliated with them.
 

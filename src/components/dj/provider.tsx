@@ -63,6 +63,7 @@ import type { DeckId, Track, EnergyRating } from "@/lib/dj/types"
 import {
   linkedFingerprint,
   mergeScannedTracks,
+  withDemoAnalysis,
 } from "@/lib/dj/library-analysis"
 import { useLibraryAnalysis } from "./use-library-analysis"
 import { useStemQueue } from "./use-stem-queue"
@@ -396,6 +397,10 @@ export function DJProvider({ children }: { children: ReactNode }) {
     automixRef.current = mix
     setAutomix(emptyAutomix)
     void readLibrary()
+      .then(async (stored) => ({
+        ...stored,
+        tracks: await withDemoAnalysis(stored.tracks),
+      }))
       .then((stored) => {
         const db = {
           ...stored,
@@ -477,9 +482,15 @@ export function DJProvider({ children }: { children: ReactNode }) {
         setStorageError(
           "IndexedDB is unavailable. Your library and cue points cannot be saved in this browser."
         )
-        setReady(true)
-        void dj.load("A", demoTracks[0])
-        void dj.load("B", demoTracks[1])
+        void withDemoAnalysis([]).then((analyzed) => {
+          if (disposed) return
+          const demo = (index: number) =>
+            analyzed.find((t) => t.id === demoTracks[index].id) ??
+            demoTracks[index]
+          setReady(true)
+          void dj.load("A", demo(0))
+          void dj.load("B", demo(1))
+        })
       })
     return () => {
       disposed = true

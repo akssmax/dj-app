@@ -77,4 +77,4 @@ These rules keep a motion piece (for example one built with Remotion) consistent
 - **Easing:** standard ease-out for UI, plus a short overshoot when the mark resolves.
 - **End card:** the lockup, "Two decks. One mix.", and a "v1 Beta" chip.
 - **Footage:** use real screen captures of the studio and Learn & Play. `public/marketing/*.jpg` works for stills.
-- **Audio:** only use the bundled CC BY 3.0 Kevin MacLeod tracks, credited, or other cleared music.
+- **Audio:** only use the bundled Pixabay tracks (see docs/AUDIO_CREDITS.md), credited, or other cleared music.

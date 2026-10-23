@@ -1,4 +1,6 @@
 import { readLinkedFile } from "./linked-files"
+import { analysisOutdated } from "./structure"
+import { demoTracks } from "./tracks"
 import type { Analysis, Track } from "./types"
 
 /** Tracks the background queue can read without a deck: linked files that
@@ -109,6 +111,53 @@ export function mergeLibraryAnalysis(
     camelot: track.keyOverride ?? analysis.camelot,
     energy: analysis.energy,
   }
+}
+
+const needsAnalysis = (track?: Track) =>
+  !track?.analysis || !track.analysis.vocals || analysisOutdated(track.analysis)
+
+/** Adds the bundled demo-track analysis (`pnpm analyze:demo`) to a saved
+ * library, so visitors can play the demo tracks without analyzing them. */
+export async function withDemoAnalysis(
+  tracks: Track[],
+  url = "/analysis/demo.json"
+): Promise<Track[]> {
+  if (
+    !demoTracks.some((demo) =>
+      needsAnalysis(tracks.find((t) => t.id === demo.id))
+    )
+  )
+    return tracks
+  let bundled: Partial<Record<string, { duration: number; analysis: Analysis }>>
+  try {
+    const response = await fetch(url)
+    if (!response.ok) return tracks
+    bundled = await response.json()
+  } catch {
+    // Offline or missing: the decks and library analyze as usual.
+    return tracks
+  }
+  let next = tracks
+  for (const demo of demoTracks) {
+    const saved = next.find((t) => t.id === demo.id),
+      entry = bundled[demo.id]
+    if (
+      !needsAnalysis(saved) ||
+      !entry ||
+      needsAnalysis({ ...demo, analysis: entry.analysis })
+    )
+      continue
+    // Demo tracks live in code; their analysis is stored as an override.
+    const analyzed = mergeLibraryAnalysis(
+      { ...demo, ...saved },
+      entry.analysis,
+      entry.duration
+    )
+    next = saved
+      ? next.map((t) => (t === saved ? analyzed : t))
+      : [...next, analyzed]
+  }
+  return next
 }
 
 export function linkedFingerprint(track: Track) {
