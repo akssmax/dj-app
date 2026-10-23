@@ -22,10 +22,10 @@ export const Route = createFileRoute("/home")({
 
 // Positions are percentages of the captured decks + mixer image.
 const callouts = [
-  { n: 1, x: 8.4, y: 42.8, text: "Press play" },
-  { n: 2, x: 31, y: 27.5, text: "Cue shows where to mix" },
-  { n: 3, x: 46.4, y: 42.5, text: "Turn down the bass" },
-  { n: 4, x: 50, y: 83.6, text: "Slide across. You're mixing." },
+  { n: 1, x: 9.6, y: 43, text: "Press play" },
+  { n: 2, x: 31.5, y: 28, text: "Cue shows where to mix" },
+  { n: 3, x: 46.5, y: 42.7, text: "Turn down the bass" },
+  { n: 4, x: 50, y: 83.1, text: "Slide across. You're mixing." },
 ]
 
 const fears = [
@@ -138,23 +138,25 @@ function HomePage() {
         <div className="site-wrap">
           <figure className="hero-stage">
             <div className="hero-frame">
-              <img
-                src={mixerShot(theme)}
-                alt={`Cue's real decks and mixer in the ${current.name} theme: two decks with waveforms, hot cues and FX either side of a mixer with EQ knobs, channel faders and a crossfader`}
-                width={2028}
-                height={1479}
-                fetchPriority="high"
-              />
-              {callouts.map((c) => (
-                <span
-                  key={c.n}
-                  className="hero-pin"
-                  style={{ left: `${c.x}%`, top: `${c.y}%` }}
-                  aria-hidden="true"
-                >
-                  {c.n}
-                </span>
-              ))}
+              <div className="hero-screen">
+                <img
+                  src={mixerShot(theme)}
+                  alt={`Cue's real decks and mixer in the ${current.name} theme: two decks with waveforms, hot cues and FX either side of a mixer with EQ knobs, channel faders and a crossfader`}
+                  width={2088}
+                  height={1506}
+                  fetchPriority="high"
+                />
+                {callouts.map((c) => (
+                  <span
+                    key={c.n}
+                    className="hero-pin"
+                    style={{ left: `${c.x}%`, top: `${c.y}%` }}
+                    aria-hidden="true"
+                  >
+                    {c.n}
+                  </span>
+                ))}
+              </div>
             </div>
             <figcaption>
               <ol className="hero-steps">

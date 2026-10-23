@@ -63,8 +63,8 @@ export function ThemesSection({
               key={theme}
               src={mixerShot(theme)}
               alt={`Decks and mixer in the ${current.name} theme`}
-              width={2028}
-              height={1479}
+              width={2088}
+              height={1506}
               loading="lazy"
             />
             <figcaption className="theme-label">

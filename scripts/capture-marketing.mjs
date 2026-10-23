@@ -32,7 +32,38 @@ const page = await browser.newPage({
 })
 await page.goto(base + "/", { waitUntil: "networkidle" })
 await page.waitForSelector("section.performance-grid", { timeout: 30000 })
-await page.waitForTimeout(2500)
+// Both decks must finish analysis, or the shots show "Analyzing…" placeholders.
+await page.waitForFunction(
+  () =>
+    !/Analyz(ing|ir)/i.test(
+      document.querySelector("section.performance-grid")?.textContent ?? ""
+    ),
+  undefined,
+  { timeout: 60000 }
+)
+await page.waitForTimeout(1500)
+
+// Clip the decks with some studio background around them so the cards'
+// rounded edges are not cut off. Neighbouring sections sit ~14px above and
+// below, so the vertical margin stays smaller.
+const PAD_X = 20
+const PAD_Y = 10
+async function shootGrid(path) {
+  const box = await page.locator("section.performance-grid").boundingBox()
+  if (!box) throw new Error("Decks not found")
+  await page.screenshot({
+    path,
+    type: "jpeg",
+    quality: 82,
+    fullPage: true,
+    clip: {
+      x: box.x - PAD_X,
+      y: box.y + (await page.evaluate(() => scrollY)) - PAD_Y,
+      width: box.width + PAD_X * 2,
+      height: box.height + PAD_Y * 2,
+    },
+  })
+}
 
 async function applyTheme(id, light) {
   await page.evaluate(
@@ -49,9 +80,7 @@ async function applyTheme(id, light) {
 
 for (const [id, light] of themes) {
   await applyTheme(id, light)
-  await page
-    .locator("section.performance-grid")
-    .screenshot({ path: `${out}mixer-${id}.jpg`, type: "jpeg", quality: 82 })
+  await shootGrid(`${out}mixer-${id}.jpg`)
   console.log(`mixer-${id}.jpg`)
 }
 
