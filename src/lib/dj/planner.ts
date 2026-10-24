@@ -325,6 +325,31 @@ function routineBias(id: string, canMatch: boolean) {
  * layered blend; an incoming track that starts at full energy, or an
  * outgoing one still at full energy, calls for a short or FX exit.
  */
+/** Average energy (of the track's peak) below which a section is quiet. */
+const QUIET = 0.35
+
+/**
+ * How far both sides of an overlap sit below QUIET, 0–1: an outro mixed
+ * into an intro leaves a hole in the set even when each side looks fine.
+ */
+export function quietOverlap(
+  outEnergy: number | null,
+  inEnergy: number | null
+) {
+  if (outEnergy === null || inEnergy === null) return 0
+  return Math.max(0, (QUIET - Math.max(outEnergy, inEnergy)) / QUIET)
+}
+
+/** A bass swap squeezed into the last bars sounds abrupt: below 8 bars it
+ * is left to a cut or FX exit. */
+export function swapTooShort(
+  execution: Transition["execution"],
+  duration: number,
+  beat: number
+) {
+  return ["bass", "long"].includes(execution) && duration < beat * 32
+}
+
 function arrangementFit(
   execution: Transition["execution"],
   exit: number | null,
@@ -925,6 +950,7 @@ export function planTransitions(
       )
       if (duration <= 0.02) return []
       if (match && duration < beat * 8) return []
+      if (swapTooShort(d.execution, duration, beat)) return []
       if (match && duration >= beat * 8)
         duration = Math.floor(duration / (beat * 8)) * beat * 8
       const latest = Math.max(position, out.duration - duration - 0.02)
@@ -1028,7 +1054,15 @@ export function planTransitions(
               .slice(0, 4)
           : [{ t: firstEntry, cost: 0 }]
       // Choose the pair together: the cheapest exit and entry can still put
-      // two voices on top of each other.
+      // two voices on top of each other, or two quiet sections.
+      const lullWeight = intent === "ease" ? 1 : 3
+      const lull = (exitAt: number, enterAt: number) =>
+        short
+          ? 0
+          : quietOverlap(
+              energyAt(out, exitAt, duration),
+              energyAt(incoming, enterAt, inLength)
+            )
       let outStart = fallbackExit,
         inStart = firstEntry,
         bestCost = Infinity
@@ -1036,7 +1070,11 @@ export function planTransitions(
         for (const enter of entries) {
           const clash =
             vocalClash(out, exit.t, incoming, enter.t, duration, rate) ?? 0
-          const cost = exit.cost + enter.cost + clash * 3
+          const cost =
+            exit.cost +
+            enter.cost +
+            clash * 3 +
+            lull(exit.t, enter.t) * lullWeight
           if (cost < bestCost) {
             bestCost = cost
             outStart = exit.t
@@ -1114,6 +1152,10 @@ export function planTransitions(
             arrangementFit(d.execution, exitEnergy, entryEnergy) -
             (d.execution === "reverb" && (exitEnergy ?? 0.5) > 0.65 ? 12 : 0) -
             (!short && duration < requested - 0.001 ? 6 : 0),
+        },
+        {
+          label: "Energy through the mix",
+          value: -lull(outStart, inStart) * (intent === "ease" ? 2 : 6),
         },
         {
           label: "Beatgrid",

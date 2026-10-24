@@ -1,4 +1,5 @@
 import type { matchLoudness } from "./loudness"
+import { quietOverlap, sectionEnergy } from "./planner"
 import type { MixIntent, MixPace, Track, Transition } from "./types"
 
 // Diagnostics for the automix leveler: one record per transition with what
@@ -22,6 +23,7 @@ export type LevelerCause = {
     | "quieter-after-mix"
     | "louder-after-mix"
     | "stem-routine"
+    | "quiet-overlap"
   db?: number
   detail?: string
 }
@@ -44,6 +46,10 @@ export type LevelerRecord = {
   outDipDb: number
   /** Incoming main-section level after the mix minus the outgoing's (dB). */
   stepDb: number | null
+  /** Each side's average energy through the overlap (of its peak, 0–1). */
+  energy: { out: number | null; in: number | null }
+  /** Under 8 beats (cuts, echo outs): no overlap to fill. */
+  short: boolean
   diagnostics: Levels["diagnostics"]
   causes: LevelerCause[]
 }
@@ -60,9 +66,17 @@ const round = (v: number) => Math.round(v * 10) / 10
 
 export function levelerCauses(
   d: Levels["diagnostics"],
-  r: Pick<LevelerRecord, "routine" | "dipDb" | "stepDb" | "out" | "in">
+  r: Pick<
+    LevelerRecord,
+    "routine" | "dipDb" | "stepDb" | "out" | "in" | "energy" | "short"
+  >
 ) {
   const causes: LevelerCause[] = []
+  if (!r.short && quietOverlap(r.energy.out, r.energy.in) > 0)
+    causes.push({
+      cause: "quiet-overlap",
+      detail: `both sides quiet: ${r.out.section ?? "?"} into ${r.in.section ?? "?"}`,
+    })
   if (r.dipDb >= 1.5) {
     const fx = d.inHeadroomDb - d.inHeadroomWithoutFxReserveDb
     if (fx >= 1) causes.push({ cause: "fx-reserve", db: round(fx) })
@@ -122,8 +136,17 @@ export function levelerRecord(
     d.inBodyDb !== null && d.outBodyDb !== null
       ? round(d.inBodyDb + levels.settledInTrim - (d.outBodyDb + trims.out))
       : null
+  const energy = (track: Track, at: number, length: number) => {
+    const value = sectionEnergy(track, at, length)
+    return value === null ? null : round(value * 100) / 100
+  }
   const base = {
     routine: plan.id,
+    short: plan.duration < (8 * 60) / (tracks.out.bpm ?? 120),
+    energy: {
+      out: energy(tracks.out, plan.outStart, plan.duration),
+      in: energy(tracks.in, plan.inStart, plan.duration * plan.rate),
+    },
     dipDb,
     outDipDb,
     stepDb,

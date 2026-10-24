@@ -459,6 +459,12 @@ export function TransitionPlanner() {
   )
 }
 
+/** " · −2.1 dB headroom" when the mix turns a deck down audibly (≥ 1 dB),
+ * so a gain dip can be told from a quiet passage. */
+function headroomNote(db: number | undefined) {
+  return db !== undefined && db >= 1 ? ` · −${db.toFixed(1)} dB headroom` : ""
+}
+
 const energyGoals = [
   { id: "ease", label: "Ease", arrow: "↘", hint: "Pick calmer tracks next" },
   {
@@ -604,6 +610,7 @@ export function TransitionCoach() {
     autoPlan: current.autoPlan,
     autoStatus: current.autoStatus,
     autoLevels: current.autoLevels,
+    autoHeadroom: current.autoHeadroom,
     transition: Math.round(current.transition * 100) / 100,
   }))
   const preparedTrack = useMemo(
@@ -1062,7 +1069,7 @@ export function TransitionCoach() {
                     : state.auto
                       ? state.autoStatus === "Waiting for the exit zone"
                         ? `${state.autoStatus} · ${formatTime(Math.max(0, ((state.autoPlan?.outStart ?? plan?.outStart ?? 0) - out.position) / out.rate))}`
-                        : state.autoStatus
+                        : `${state.autoStatus}${headroomNote(state.autoHeadroom)}`
                       : instruction}
               </span>
             </div>
@@ -1292,6 +1299,7 @@ function CoachDetails({
   const state = useEngine((current) => ({
     auto: current.auto,
     autoLevels: current.autoLevels,
+    autoHeadroom: current.autoHeadroom,
   }))
   const why = (
     <>
@@ -1397,7 +1405,7 @@ function CoachDetails({
           )}
           {state.auto && state.autoLevels && (
             <div className="coach-automix-note">
-              <strong>Automix levels</strong>
+              <strong>Automix levels{headroomNote(state.autoHeadroom)}</strong>
               <p>{state.autoLevels}</p>
               <p>
                 Crossfader at 50% · channel faders and EQ perform the handoff.

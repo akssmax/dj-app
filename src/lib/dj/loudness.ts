@@ -175,6 +175,8 @@ const clamp = (value: number, low: number, high: number) =>
 
 /** Main-section level the set is anchored around (stereo RMS, dBFS). */
 export const TARGET_BODY_DB = -10
+/** Most the set's level moves toward the target in one mix (dB). */
+const TARGET_STEP = 1
 const LIMIT = 10 ** (-3 / 20)
 /** Headroom moves at most this fast (dB per second), so it is never heard
  * as a step. */
@@ -197,13 +199,15 @@ export function matchLoudness(
   const outTrim = original.out.trim
   // Match the tracks' main sections, not the mix points: an outro or intro
   // is quieter by design, and matching to it left the next track low for its
-  // whole run. The set keeps the outgoing track's level, within 3 dB of the
-  // target, so trims can't drift from mix to mix.
+  // whole run. Each mix moves the set's level at most TARGET_STEP toward
+  // the target, too little to hear, so a loud or quiet opener doesn't set
+  // the level for the whole set; it never strays more than 3 dB from it.
   let reference: number | null = null,
     desiredTrim: number | null = null
   if (outBody && inBody) {
+    const level = 20 * Math.log10(outBody) + outTrim
     reference = clamp(
-      20 * Math.log10(outBody) + outTrim,
+      level + clamp(TARGET_BODY_DB - level, -TARGET_STEP, TARGET_STEP),
       TARGET_BODY_DB - 3,
       TARGET_BODY_DB + 3
     )

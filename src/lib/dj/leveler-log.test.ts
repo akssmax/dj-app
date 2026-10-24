@@ -77,7 +77,8 @@ describe("leveler", () => {
     )
     expect(profiled.settledInTrim).toBeCloseTo(direct.settledInTrim, 1)
     expect(profiled.headroomDb).toBeCloseTo(direct.headroomDb, 1)
-    expect(record(direct).stepDb).toBeCloseTo(0, 0)
+    // Same main level, moved under 1 dB toward the target.
+    expect(Math.abs(record(direct).stepDb!)).toBeLessThanOrEqual(1)
   })
   it("matches main sections, so a quiet outro doesn't leave the next track low", async () => {
     const out = pcm(0.5),
@@ -91,7 +92,7 @@ describe("leveler", () => {
       0.8
     )
     expect(levels.diagnostics.basis).toBe("body")
-    expect(Math.abs(record(levels).stepDb!)).toBeLessThan(0.5)
+    expect(Math.abs(record(levels).stepDb!)).toBeLessThanOrEqual(1)
   })
   it("holds the set within 3 dB of the target level", async () => {
     // Outgoing trimmed to +9 dB above the target: the next track lands at
@@ -104,6 +105,18 @@ describe("leveler", () => {
       0.8
     )
     expect(levels.diagnostics.referenceDb).toBe(TARGET_BODY_DB + 3)
+  })
+  it("moves the set's level toward the target by at most 1 dB a mix", async () => {
+    // Both tracks 4 dB above the target: the next one lands 1 dB lower.
+    const loud = 10 ** ((TARGET_BODY_DB + 4) / 20) * Math.SQRT2
+    const levels = matchLoudness(
+      await prepared(pcm(loud)),
+      await prepared(pcm(loud)),
+      fade,
+      { out: saved, incoming: saved },
+      0.8
+    )
+    expect(levels.settledInTrim).toBeCloseTo(-1, 1)
   })
   it("takes overlap headroom mostly from the outgoing deck, only while both play", () => {
     const bass = {

@@ -110,6 +110,8 @@ export type EngineState = {
   crossfade: number
   channelMix: boolean
   autoLevels: string
+  /** Deepest overlap headroom of the current automix transition (dB). */
+  autoHeadroom?: number
   master: number
   auto: boolean
   autoOut: DeckId | null
@@ -2940,6 +2942,7 @@ export class DJEngine {
     // incoming deck is silent, so its matched trim can apply now.
     this.state[incoming].trim = levels.inTrim
     this.state.autoLevels = levels.message
+    this.state.autoHeadroom = levels.headroomDb
     this.applyChannel(out)
     this.applyChannel(incoming)
     this.applyMix()

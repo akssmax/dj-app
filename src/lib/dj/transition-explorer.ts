@@ -2,7 +2,12 @@ import type { FXAmount } from "./auto-fx"
 import { beatOffset } from "./beatgrid"
 import { cueOptions } from "./cue-suggestions"
 import type { CueOption } from "./cue-suggestions"
-import { arrangementRoutines, planTransitions, sectionEnergy } from "./planner"
+import {
+  arrangementRoutines,
+  planTransitions,
+  sectionEnergy,
+  swapTooShort,
+} from "./planner"
 import type { MixIntent, MixPace, Track, Transition } from "./types"
 
 export type CuePair = {
@@ -126,7 +131,11 @@ export function discoverTransitions(
             )
             if (template.beatmatch)
               duration = Math.floor(duration / (8 * beat)) * 8 * beat
-            if (duration <= 0.02 || (template.beatmatch && duration < 8 * beat))
+            if (
+              duration <= 0.02 ||
+              (template.beatmatch && duration < 8 * beat) ||
+              swapTooShort(template.execution, duration, beat)
+            )
               continue
             const difference =
               out.bpm && incoming.bpm
