@@ -1,8 +1,9 @@
 import { deckMixGain, outgoingDeck } from "./engine"
 import type { DJEngine } from "./engine"
+import { setLevelerContext } from "./leveler-log"
 import { recommendTracks } from "./library-scope"
 import type { LibraryDatabase } from "./storage"
-import type { DeckId, Track } from "./types"
+import type { DeckId, MixIntent, MixPace, Track } from "./types"
 import { arcAt, arcStep, setProgress } from "./set-plan"
 import type { SetPhase } from "./set-plan"
 
@@ -38,7 +39,7 @@ export const emptyAutomix: AutomixState = {
   set: null,
 }
 
-type Options = {
+export type AutomixOptions = {
   pool: Track[]
   session: LibraryDatabase["session"]
   cues: LibraryDatabase["cues"]
@@ -53,6 +54,8 @@ export class AutomixSession {
   private played = new Set<string>()
   /** Played tracks in order, for artist / vibe / key history. */
   private history: Track[] = []
+  /** Energy goal and pace of the last pick, for the leveler log. */
+  private picked?: { intent: MixIntent; pace: MixPace }
   private setStartedAt: number | null = null
   /** Routines used in the current part of the set. */
   private usage: { phase: SetPhase | null; ids: string[] } = {
@@ -72,7 +75,7 @@ export class AutomixSession {
 
   constructor(
     private engine: DJEngine,
-    private getOptions: () => Options,
+    private getOptions: () => AutomixOptions,
     private load: (id: DeckId, track: Track) => Promise<void>,
     private onChange: (state: AutomixState) => void,
     private notify: (message: string) => void
@@ -307,12 +310,16 @@ export class AutomixSession {
     )
     // A pinned track plays next when it is still available.
     const pinned = candidates.filter((track) => track.id === this.pinned)
+    this.picked = {
+      intent: arc?.now.intent ?? options.session.mixIntent,
+      pace: arc?.now.pace ?? options.session.mixPace,
+    }
     const result = recommendTracks(
       deck.track,
       pinned.length ? pinned : candidates,
       undefined,
       this.engine.plannedRate(out),
-      arc?.now.intent ?? options.session.mixIntent,
+      this.picked.intent,
       {
         position: deck.position,
         recent: options.session.recentTransitions,
@@ -469,7 +476,17 @@ export class AutomixSession {
     this.pendingPlay = source.playing ? null : out
     if (revalidated.track.id === this.pinned) this.pinned = null
     this.usage.ids.push(revalidated.plan.id)
-    await this.own(() => this.engine.startAuto(out, revalidated.plan))
+    const session = this.getOptions().session
+    setLevelerContext({
+      mode: session.setPlan.follow ? "set" : session.mixIntent,
+      intent: this.picked?.intent ?? session.mixIntent,
+      pace: this.picked?.pace ?? session.mixPace,
+    })
+    try {
+      await this.own(() => this.engine.startAuto(out, revalidated.plan))
+    } finally {
+      setLevelerContext(null)
+    }
     if (!this.live(generation)) return
     this.pendingPlay = null
     if (this.live(generation) && !this.engine.state.auto)

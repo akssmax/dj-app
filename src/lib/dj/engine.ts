@@ -15,6 +15,8 @@ import { analysisOutdated, VOCALS_VERSION } from "./structure"
 import { automationControls, automationFrame, stemGainsAt } from "./automation"
 import type { AutomationChannel } from "./automation"
 import { matchLoudness, prepareLoudness } from "./loudness"
+import { levelerContext, levelerRecord, pushLeveler } from "./leveler-log"
+import { sectionAt } from "./sections"
 import {
   bassExchangeAt,
   deckKey,
@@ -885,6 +887,16 @@ export class DJEngine {
     if (!this.masterAnalyser) return false
     this.masterAnalyser.getByteFrequencyData(out)
     return true
+  }
+  private masterSamples?: Float32Array<ArrayBuffer>
+  /** Master output RMS (linear, after the limiter); null before audio starts. */
+  readMasterLevel() {
+    if (!this.masterAnalyser) return null
+    this.masterSamples ??= new Float32Array(this.masterAnalyser.fftSize)
+    this.masterAnalyser.getFloatTimeDomainData(this.masterSamples)
+    let sum = 0
+    for (const value of this.masterSamples) sum += value * value
+    return Math.sqrt(sum / this.masterSamples.length)
   }
   get masterSpectrumSize() {
     return this.masterAnalyser?.frequencyBinCount ?? 1024
@@ -2903,6 +2915,22 @@ export class DJEngine {
       { out: original[out], incoming: original[incoming] },
       outVolume
     )
+    pushLeveler(
+      levelerRecord(
+        levelerContext(),
+        safePlan,
+        { out: this.state[out].track, in: this.state[incoming].track },
+        { out: original[out].trim, in: original[incoming].trim },
+        {
+          out:
+            sectionAt(this.state[out].track, safePlan.outStart)?.label ?? null,
+          in:
+            sectionAt(this.state[incoming].track, safePlan.inStart)?.label ??
+            null,
+        },
+        levels
+      )
+    )
     this.state.channelMix = true
     this.state.crossfade = 0.5
     this.state[out].volume = levels.outVolume
@@ -3000,21 +3028,11 @@ export class DJEngine {
       auto.original[id],
       outgoing,
       outgoing ? auto.levels.outVolume : auto.levels.inVolume,
-      outgoing ? auto.levels.outTrim : auto.levels.inTrim
+      // Overlap headroom follows the faders (see matchLoudness): mostly on
+      // the outgoing deck, ramping in from nothing while it plays.
+      (outgoing ? auto.original[id].trim : auto.levels.settledInTrim) -
+        curveAt(outgoing ? auto.levels.outCut : auto.levels.inCut, progress)
     )
-    if (outgoing) {
-      // Headroom for the overlap eases in over the first bar (or the whole
-      // transition when it is shorter), never as a step on a playing track.
-      const bar =
-        240 / ((this.state[id].track?.bpm ?? 120) * this.state[id].rate)
-      const reach = Math.min(
-        1,
-        (progress * auto.duration) / Math.max(0.05, bar)
-      )
-      controls.trim =
-        auto.original[id].trim +
-        (auto.levels.outTrim - auto.original[id].trim) * reach
-    }
     // Existing manual FX and knobs touched during this transition belong to
     // the person. Automation continues to own the untouched controls.
     if (auto.original[id].fx.enabled) controls.fx = auto.original[id].fx
@@ -3318,8 +3336,8 @@ export class DJEngine {
         ch = this.channels[id]!
       const controls = (p: number) => this.controlsAt(auto, id, p)
       schedule(ch.gain.gain, (p) => controls(p).volume)
-      // Trim: the incoming match applied while it was silent; the outgoing
-      // headroom eases in over the first bar.
+      // Trim: the incoming match applied while it was silent; each deck's
+      // headroom follows its curve.
       if (!("trim" in auto.overrides[id]))
         schedule(ch.trim.gain, (p) => 10 ** (controls(p).trim / 20))
       for (const band of ["low", "mid", "high"] as const)
@@ -3810,4 +3828,14 @@ export function deckOutputWarning(
   if (Math.abs(state[id].filter) > 0.9)
     return `Deck ${id} filter is cutting most frequencies`
   return null
+}
+
+/** A 257-point automation curve at a point of the transition (0–1). */
+function curveAt(curve: number[], progress: number) {
+  const x = Math.max(0, Math.min(1, progress)) * (curve.length - 1),
+    i = Math.floor(x)
+  return (
+    curve[i] +
+    ((curve[Math.min(i + 1, curve.length - 1)] ?? 0) - curve[i]) * (x - i)
+  )
 }

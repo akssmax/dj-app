@@ -188,7 +188,8 @@ describe("measured section levels and headroom", () => {
       0.8
     )
     expect(levels.settledInTrim).toBeCloseTo(-3, 3)
-    // Loud masters get overlap headroom, released after the mix.
+    // An equal-power fade of two loud masters is no louder than either
+    // alone, so it needs no headroom and leaves nothing to release.
     const loud = matchLoudness(
       pcm(0.99),
       pcm(0.99),
@@ -196,10 +197,10 @@ describe("measured section levels and headroom", () => {
       { out: saved, incoming: saved },
       1
     )
-    expect(loud.inTrim).toBeLessThan(loud.settledInTrim)
+    expect(loud.headroomDb).toBe(0)
     expect(loud.settledInTrim).toBeCloseTo(0, 3)
   })
-  it("keeps the overlap's power-summed peak below -3dB including extreme positive EQ", () => {
+  it("keeps the overlap's power-summed peak below -3dB, or the louder deck alone, including extreme positive EQ", () => {
     for (const recipe of [
       plan,
       { ...getPlan("bass"), outStart: 0, inStart: 0 },
@@ -216,14 +217,16 @@ describe("measured section levels and headroom", () => {
         for (let n = 0; n <= 256; n++) {
           const frame = automationFrame(recipe, n / 256)
           const peak = 0.99 * 10 ** ((boost * 3) / 20)
+          const out = peak,
+            incoming = peak * 10 ** (levels.settledInTrim / 20)
           const sum = Math.hypot(
-            peak *
-              10 ** (levels.outTrim / 20) *
-              levels.outVolume *
-              frame.outFader,
-            peak * 10 ** (levels.inTrim / 20) * levels.inVolume * frame.inFader
+            out * frame.outFader * 10 ** (-levels.outCut[n] / 20),
+            incoming * frame.inFader * 10 ** (-levels.inCut[n] / 20)
           )
-          expect(sum).toBeLessThanOrEqual(10 ** (-3 / 20) + 0.0001)
+          // Never louder than -3 dB or either track playing alone.
+          expect(sum * levels.outVolume).toBeLessThanOrEqual(
+            Math.max(10 ** (-3 / 20), out, incoming) + 0.0001
+          )
         }
       }
     }

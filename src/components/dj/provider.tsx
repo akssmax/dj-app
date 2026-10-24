@@ -69,6 +69,7 @@ import {
 import { useLibraryAnalysis } from "./use-library-analysis"
 import { useStemQueue } from "./use-stem-queue"
 import { camelotKeys } from "@/lib/dj/key"
+import { installLevelerDebug } from "@/lib/dj/leveler-sim"
 
 export { useDJ }
 
@@ -381,21 +382,23 @@ export function DJProvider({ children }: { children: ReactNode }) {
         },
       }))
     }
+    const automixOptions = () => ({
+      pool: scopeRef.current,
+      session: dataRef.current.session,
+      cues: dataRef.current.cues,
+      labels: dataRef.current.cueLabels,
+      saved: dataRef.current.savedTransitions,
+      ratings: dataRef.current.transitionRatings,
+    })
     const mix = new AutomixSession(
       dj,
-      () => ({
-        pool: scopeRef.current,
-        session: dataRef.current.session,
-        cues: dataRef.current.cues,
-        labels: dataRef.current.cueLabels,
-        saved: dataRef.current.savedTransitions,
-        ratings: dataRef.current.transitionRatings,
-      }),
+      automixOptions,
       loadTrack,
       setAutomix,
       notify
     )
     automixRef.current = mix
+    const removeLevelerDebug = installLevelerDebug(automixOptions, dj)
     setAutomix(emptyAutomix)
     void readLibrary()
       // Saved records of replaced demo tracks would load deleted audio.
@@ -502,6 +505,7 @@ export function DJProvider({ children }: { children: ReactNode }) {
       feedbackCleanup.current?.()
       feedbackCleanup.current = null
       mix.dispose()
+      removeLevelerDebug()
       automixRef.current = null
       dj.dispose()
       midiActivity.reset()
